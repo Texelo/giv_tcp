@@ -66,6 +66,9 @@ async def getInvDeets(HOST):
         elif not client.plant.gateway ==None:
             GEInv=client.plant.gateway
             logger.debug("is gateway")
+        else:
+            logger.debug("is something else?")
+
 
 
         logger.debug(GEInv)

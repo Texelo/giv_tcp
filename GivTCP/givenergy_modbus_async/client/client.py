@@ -207,16 +207,28 @@ class Client:
         #find model depending on device type
         if not self.plant.inverter == None:
             self.plant.device_type=self.plant.inverter.model
+            _logger.debug("client: is inverter")
+
             
         elif not self.plant.gateway == None:
             self.plant.device_type=self.plant.gateway.model
+            _logger.debug("client: is gateway")
+
         elif not self.plant.ems == None:
             self.plant.device_type=self.plant.ems.model
+            _logger.debug("client: is ems")
+        else:
+            _logger.debug("client: is something else?")
+
 
         if self.plant.device_type in (Model.ALL_IN_ONE, Model.AC_3PH, Model.HYBRID_3PH):
+            _logger.debug("client: device type: " + self.plant.device_type)
             self.plant.isHV = True
             meter_list=[1,2,3,4,5,6,7,8]
         else:
+            _logger.debug("client: device type unknown")
+            _logger.debug("client: device type: " + self.plant.device_type)
+
             self.plant.isHV= False
             meter_list=[]
 
