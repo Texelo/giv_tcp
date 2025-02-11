@@ -262,6 +262,9 @@ logger.setLevel(logging.DEBUG)
 
 SuperTimezone={}        # 02-Aug-23  default it to None so that it is defined for saving in settngs.py for non-HA usage (otherwise exception)
 logger.info("==================== STARTING GivTCP==========================")
+logger.info("logger level:")
+logger.info(logger.level)
+logger.debug("is debug")
 try:
     logger.debug("SUPERVISOR_TOKEN is: "+ os.getenv("SUPERVISOR_TOKEN"))
     isAddon=True
