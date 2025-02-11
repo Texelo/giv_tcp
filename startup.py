@@ -69,9 +69,6 @@ async def getInvDeets(HOST):
         else:
             logger.debug("is something else?")
 
-
-
-        logger.debug(GEInv)
         SN= GEInv.serial_number
         gen=GEInv.generation
         model=GEInv.model
