@@ -23,7 +23,7 @@ arch:
 host_network: true
 options:
   NUMINVERTORS: 1
-  INVERTOR_IP_1:  "192.168.0.187"
+  INVERTOR_IP_1:  ""
   INVERTOR_NAME_1: "Inv1"
   INVERTOR_AIO_1: False
   INVERTOR_AC_1: True
@@ -50,7 +50,7 @@ options:
   MQTT_TOPIC_3: ""
   MQTT_PORT: 1883
   MQTT_RETAIN: False
-  LOG_LEVEL: "Debug"
+  LOG_LEVEL: "Info"
   PRINT_RAW: True
   SELF_RUN: True
   SELF_RUN_LOOP_TIMER: 15

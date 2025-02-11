@@ -257,7 +257,7 @@ fh = TimedRotatingFileHandler("/config/GivTCP/startup.log", when='midnight', bac
 fh.setFormatter(formatter)
 logger = logging.getLogger()
 logger.addHandler(fh)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 
 SuperTimezone={}        # 02-Aug-23  default it to None so that it is defined for saving in settngs.py for non-HA usage (otherwise exception)
