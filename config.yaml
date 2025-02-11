@@ -12,7 +12,7 @@ services:
 map:
   - config:rw
 boot:  auto
-url:  https://github.com/britkat1980/giv_tcp
+url:  https://github.com/texelo/giv_tcp
 legacy:  true
 arch: 
   - aarch64
