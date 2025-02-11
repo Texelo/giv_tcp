@@ -59,11 +59,16 @@ async def getInvDeets(HOST):
         await client.close()
         if not client.plant.inverter ==None:
             GEInv=client.plant.inverter
+            logger.debug("is inverter")
         elif not client.plant.ems ==None:
             GEInv=client.plant.ems
+            logger.debug("is ems")
         elif not client.plant.gateway ==None:
             GEInv=client.plant.gateway
+            logger.debug("is gateway")
 
+
+        logger.debug(GEInv)
         SN= GEInv.serial_number
         gen=GEInv.generation
         model=GEInv.model
