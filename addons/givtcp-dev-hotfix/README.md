@@ -74,10 +74,18 @@ for the full trace.
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually
-shipping in the 3.5.47 dev image — they're all on an older/different library. Rather than
-guess at reconstructing the full app from source, this Dockerfile builds `FROM` the exact
-upstream `givtcp.docker.scarf.sh/britkat/giv_tcp-dev:3.5.47` image and layers on a
-corrected `GivTCP/read.py`. Nothing else changes.
+shipping in the 3.5.47 dev image — they're all on an older/different library.
+
+This started as a thin overlay (`FROM givtcp.docker.scarf.sh/britkat/giv_tcp-dev:3.5.47`
++ `COPY read.py`), but the scarf.sh gateway that fronts that image rate-limits `FROM`
+pulls (`429 Too Many Requests`), which broke Supervisor's build more than once. As of
+hotfix3 this is now a **self-contained build**: the full `/app` tree (`GivTCP/`,
+`WebDashboard/`, `ingress/`, `startup.py`, etc.) was extracted from the exact 3.5.47
+image, the same `read.py` fix applied on top, and `requirements.txt` pinned to the exact
+package versions that image ships — verified byte-for-byte against `pip freeze` run
+inside the original container, so there's no dependency drift. Only `python:3.14-alpine`
+(pulled from Docker Hub, not scarf.sh) and its own patch-level updates aren't pinned;
+everything Python-level is.
 
 ## Installing
 

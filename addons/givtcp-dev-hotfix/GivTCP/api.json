@@ -1,0 +1,316 @@
+{
+    "api": "GivTCP REST API stack\nCalls made to each inverter seperately on port 8099 at /REST1, /REST2, /REST3, /REST4 or /REST5",
+    "commands": {
+        "setChargeControl": {
+            "url": "/setChargeControl",
+            "method": "POST",
+            "usage": "starts or stops the EVC charger",
+            "payload": "{'mode':'start' or \"stop'}"
+        },
+        "setChargingMode": {
+            "url": "/setChargingMode",
+            "method": "POST",
+            "usage": "Sets the Charging Mode for EVC",
+            "payload": "{'state':'enable' or 'disable'}"
+        },
+        "setCurrentLimit": {
+            "url": "/setCurrentLimit",
+            "method": "POST",
+            "usage": "Sets MAX EVC current draw in [A]",
+            "payload": "{'current':'32'}"
+        },
+        "enableChargeTarget": {
+            "url": "/enableChargeTarget",
+            "method": "POST",
+            "usage": "Enable Target SOC",
+            "payload": "{'state':'enable' or 'disable'}"
+        },
+        "enableDischarge": {
+            "url": "/enableDischarge",
+            "method": "POST",
+            "usage": "Enable Battery Discharge",
+            "payload": "{'state':'enable' or 'disable'}"
+        },
+        "enableChargeSchedule": {
+            "url": "/enableChargeSchedule",
+            "method": "POST",
+            "usage": "Enable Charge target schedule",
+            "payload": "{'state':'enable' or 'disable'}"
+        },
+        "enableDischargeSchedule": {
+            "url": "/enableDischargeSchedule",
+            "method": "POST",
+            "usage": "Enable Discharge target schedule",
+            "payload": "{'state':'enable' or 'disable'}"
+        },
+        "setForceCharge": {
+            "url": "/setForceCharge",
+            "method": "POST",
+            "usage": "Enables Force Charge on Three Phase Inverters",
+            "payload": "{'state':'enabled' or 'disabled'}"
+        },
+        "forceCharge": {
+            "url": "/forceCharge",
+            "method": "POST",
+            "usage": "Forces battery to charge for the defined duration in Minutes or send Cancel command",
+            "payload": "{'duration':'30' or 'Cancel'}"
+        },
+        "setForceDischarge": {
+            "url": "/setForceDischarge",
+            "method": "POST",
+            "usage": "Enables Force Discharge on Three Phase Inverters",
+            "payload": "{'state':'enabled' or 'disabled'}"
+        },
+        "forceExport": {
+            "url": "/forceExport",
+            "method": "POST",
+            "usage": "Forces battery to discharge at max power for the defined duration in Minutes or send Cancel command",
+            "payload": "{'duration':'30' or 'Cancel'}"
+        },
+        "fullCache": {
+            "url": "/fullCache",
+            "method": "GET",
+            "usage": "Return full cache History as a json file"
+        },
+        "runAll": {
+            "url": "/runAll",
+            "method": "GET",
+            "usage": "Retrieve Last known data from the pkl file cache"
+        },
+        "getCache": {
+            "url": "/getCache",
+            "method": "GET",
+            "usage": "GET Last known data from the pkl file cache"
+        },
+        "getEVCCache": {
+            "url": "/getEVCCache",
+            "method": "GET",
+            "usage": "Retrieve Last known data from the EVC file cache"
+        },
+        "setImportCap": {
+            "url": "/setImportCap",
+            "method": "POST",
+            "usage": "Sets gird import cap for EVC charging in [A]",
+            "payload": "{'current':'60'}"
+        },
+        "setMaxSessionEnergy": {
+            "url": "/setMaxSessionEnergy",
+            "method": "POST",
+            "usage": "Sets MAX EVC energy per charge session [kWh]",
+            "payload": "{'energy':'20.5'}"
+        },
+        "readData": {
+            "url": "/readData",
+            "method": "GET",
+            "usage": "GET Last known data from the pkl file cache"
+        },
+        "reboot": {
+            "url": "/reboot",
+            "method": "GET",
+            "usage": "Restart the Inverter"
+        },
+        "restart": {
+            "url": "/restart",
+            "method": "GET",
+            "usage": "Restart the Container/Addon"
+        },
+        "settings": {
+            "url": "/settings",
+            "method": "POST",
+            "usage": "Save settings into json file",
+            "payload": "{    Payload: json object conforming to the settings_template}"
+        },
+        "setBatteryCutoff": {
+            "url": "/setBatteryCutoff",
+            "method": "POST",
+            "usage": "Set Battery cut off SOC percentage",
+            "payload": "{'dischargeToPercent':'4'}"
+        },
+        "setBatteryMode": {
+            "url": "/setBatteryMode",
+            "method": "POST",
+            "usage": "Sets the inverter operation mode ",
+            "payload": "{'mode':'Eco' or 'Eco (Paused)' or 'Timed Demand' or 'Timed Export'}"
+        },
+        "setBatteryPauseMode": {
+            "url": "/setBatteryPauseMode",
+            "method": "POST",
+            "usage": "Sets the battery pause mode setting, (requires pauseslot to be set)",
+            "payload": "{'state':'enable' or 'disable'}"
+        },
+        "setBatteryReserve": {
+            "url": "/setBatteryReserve",
+            "method": "POST",
+            "usage": "Set Battery reserve SOC percentage",
+            "payload": "{'reservePercent':'4'}"
+        },
+        "setBatteryCalibration": {
+            "url": "/setBatteryCalibration",
+            "method": "POST",
+            "usage": "Trigger or stop a Battery Calibration",
+            "payload": "{'state':'off' or 'start'}"
+        },
+        "setCarChargeBoost": {
+            "url": "/setCarChargeBoost",
+            "method": "POST",
+            "usage": "Set Car charge Boost value in watts",
+            "payload": "{'boost':'2500'}"
+        },
+        "setChargeSlot": {
+            "url": "/setChargeSlot",
+            "method": "POST",
+            "usage": "Set Charge schedule timeslots",
+            "payload": "{'start':'16:00','finish':'19:00','slot':'1', 'chargeToPercent':'25' (optional)}"
+        },
+        "setChargeSlot1": {
+            "url": "/setChargeSlot1",
+            "method": "POST",
+            "usage": "Set Charge schedule timeslot 1",
+            "payload": "{'start':'16:00','finish':'19:00', 'chargeToPercent':'25' (optional)}"
+        },
+        "setChargeSlot2": {
+            "url": "/setChargeSlot2",
+            "method": "POST",
+            "usage": "Set Charge schedule timeslot 2",
+            "payload": "{'start':'16:00','finish':'19:00', 'chargeToPercent':'25' (optional)}"
+        },
+        "setChargeSlot3": {
+            "url": "/setChargeSlot3",
+            "method": "POST",
+            "usage": "Set Charge schedule timeslot 3",
+            "payload": "{'start':'16:00','finish':'19:00', 'chargeToPercent':'25' (optional)}"
+        },
+        "setChargeTarget": {
+            "url": "/setChargeTarget",
+            "method": "POST",
+            "usage": "Set Charge target SOC",
+            "payload": "{'chargeToPercent':'45'}"
+        },
+        "setChargeRate": {
+            "url": "/setChargeRate",
+            "method": "POST",
+            "usage": "Set Battery charge rate in watts",
+            "payload": "{'chargeRate':'2500'}"
+        },
+        "setChargeRateAC": {
+            "url": "/setChargeRateAC",
+            "method": "POST",
+            "usage": "Set Battery charge rate in percentage",
+            "payload": "{'chargeRate':'75'}"
+        },
+        "setDateTime": {
+            "url": "/setDateTime",
+            "method": "POST",
+            "usage": "Sets the inverter system time and date",
+            "payload": "{'dateTime':'%d/%m/%Y %H:%M:%S'}"
+        },
+        "setDischargeSlot": {
+            "url": "/setDischargeSlot",
+            "method": "POST",
+            "usage": "Set Discharge schedule timeslots",
+            "payload": "{'start':'16:00','finish':'19:00','slot':'1\", 'dischargeToPercent':'25' (optional)}"
+        },
+        "setDischargeSlot1": {
+            "url": "/setDischargeSlot1",
+            "method": "POST",
+            "usage": "Set Discharge schedule timeslot 1",
+            "payload": "{'start':'16:00','finish':'19:00\", 'dischargeToPercent':'25' (optional)}"
+        },
+        "setDischargeSlot2": {
+            "url": "/setDischargeSlot2",
+            "method": "POST",
+            "usage": "Set Discharge schedule timeslot 2",
+            "payload": "{'start':'16:00','finish':'19:00\", 'dischargeToPercent':'25' (optional)}"
+        },
+        "setDischargeSlot3": {
+            "url": "/setDischargeSlot3",
+            "method": "POST",
+            "usage": "Set Discharge schedule timeslot 1",
+            "payload": "{'start':'16:00','finish':'19:00\", 'dischargeToPercent':'25' (optional)}"
+        },
+        "setDischargeTarget": {
+            "url": "/setDischargeTarget",
+            "method": "POST",
+            "usage": "Set Discharge target SOC by defining which target slot and SOC.",
+            "payload": "{'exportToPercent':'45', 'slot':'1'}"
+        },
+        "setDischargeRate": {
+            "url": "/setDischargeRate",
+            "method": "POST",
+            "usage": "Set Battery discharge rate in watts",
+            "payload": "{'dischargeRate':'2500'}"
+        },
+        "setDischargeRateAC": {
+            "url": "/setDischargeRateAC",
+            "method": "POST",
+            "usage": "Set Battery discharge rate in percentage",
+            "payload": "{'dischargeRate':'75'}"
+        },
+        "setExportSlot1": {
+            "url": "/setExportSlot1",
+            "method": "POST",
+            "usage": "Set Export schedule timeslot 1",
+            "payload": "{'start':'16:00','finish':'19:00'}"
+        },
+        "setExportSlot2": {
+            "url": "/setExportSlot2",
+            "method": "POST",
+            "usage": "Set Export schedule timeslot 2",
+            "payload": "{'start':'16:00','finish':'19:00'}"
+        },
+        "setExportSlot3": {
+            "url": "/setExportSlot3",
+            "method": "POST",
+            "usage": "Set Export schedule timeslot 3",
+            "payload": "{'start':'16:00','finish':'19:00'}"
+        },
+        "setExportTarget": {
+            "url": "/setExportTarget",
+            "method": "POST",
+            "usage": "Set Export target SOC by defining which target slot and SOC",
+            "payload": "{'exportToPercent':'45', 'slot':'1'}"
+        },
+        "setPauseSlot": {
+            "url": "/setPauseSlot",
+            "method": "POST",
+            "usage": "Set Battery pause control timeslot",
+            "payload": "{'start':'16:00','finish':'19:00'}"
+        },
+        "setACCharge": {
+            "url": "/setACCharge",
+            "method": "POST",
+            "usage": "Enables AC Charge on Three Phase Inverters",
+            "payload": "{'state':'enabled' or \"disabled'}"
+        },
+        "setEcoMode": {
+            "url": "/setEcoMode",
+            "method": "POST",
+            "usage": "Toggles the battery 'Eco Mode' setting (otherwise known as 'winter mode')",
+            "payload": "{'state':'enable' or 'disable'}"
+        },
+        "switchRate": {
+            "url": "/switchRate",
+            "method": "POST",
+            "usage": "Sets dynamic tariff rate",
+            "payload": "{'rate':'day' or \"night'}"
+        },
+        "syncDateTime": {
+            "url": "/syncDateTime",
+            "method": "POST",
+            "usage": "Syncs the inverter system time and date with Container time",
+            "payload": "{'dateTime':'%d/%m/%Y %H:%M:%S'}"
+        },
+        "tempPauseCharge": {
+            "url": "/tempPauseCharge",
+            "method": "POST",
+            "usage": "Pauses charge to battery for the defined duration in Minutes or send Cancel command",
+            "payload": "{'duration':'30' or 'Cancel'}"
+        },
+        "tempPauseDischarge": {
+            "url": "/tempPauseDischarge",
+            "method": "POST",
+            "usage": "Pauses discharge from battery for the defined duration in Minutes or send Cancel command",
+            "payload": "{'duration':'30' or 'Cancel'}"
+        }
+    }
+}

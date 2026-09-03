@@ -1,0 +1,30 @@
+body {
+    font-family: Roboto, sans-serif;
+    background-color: #b6b5b5;
+    margin: 0;
+    padding: 0;
+}
+#hp  {
+    float: left;    
+    margin: 0 0 0 20px;
+}
+.container {
+    max-width: 800px;
+    margin: 50px auto;
+    text-align: center;
+}
+
+h1 {
+    color: #4fbba9;
+    font-weight: 300;
+}
+
+a {
+    text-decoration: none;
+    color: #233c7b;
+    margin: 10px;
+}
+
+a:hover {
+    text-decoration: underline;
+}
