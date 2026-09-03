@@ -206,6 +206,51 @@ were touched, and no non-`'error' in result:`-guarded `raise Exception` sites we
 affected) - doesn't alter control flow or write behaviour, only what gets logged when
 something fails.
 
+## hotfix9: enable Battery Pause (mode/slot) writes on HV Gen3
+
+hotfix8's better error surfacing revealed the real reason `setPauseSlot`/
+`setBatteryPauseMode` failed: `HR(319) is not permitted for HYBRID_HV_GEN3 inverter`.
+This isn't a migration bug - `givenergy-modbus` deliberately blocks battery-pause
+writes (HR 318-320) at the client's per-model gate for *every* model, citing a
+tracked-but-parked upstream issue (dewet22/givenergy-modbus#115, referenced from
+#268): some GivEnergy firmware sends a malformed/error-shaped Modbus response
+(function code 0x86) to a battery-pause write, which the old GivTCP-vendored library
+silently treated as success but the new library has no decoder for. The block is
+blanket and conservative - the issue itself says the affected hardware is
+"presumably an LV battery" on **Gen1**, not confirmed on HV Gen3, and PDU-level
+validation (`WRITE_SAFE_REGISTERS`) already recognises 318-320 as legitimate,
+correctly-named registers ("pause battery", "pause battery start/end time").
+
+Confirmed via the GivEnergy Cloud portal's own remote-control history that Battery
+Pause is a genuinely supported, working control on this exact HV Gen3 inverter today
+- strong evidence the block doesn't apply to this hardware, just catches it under a
+blanket "we don't know which models are affected, so exclude everyone" precaution.
+
+Added a narrow bypass: `sendAsyncCommand()` takes a `bypass_model_gate` flag that,
+when set, sends each request via `client.send_request_and_await_response()` directly
+instead of `one_shot_command()` - skipping *only* the per-model gate (Gate 1), while
+every request still goes through `request.encode()`'s PDU-level validation (Gate 2,
+`WRITE_SAFE_REGISTERS`) exactly as before, so this is not an unchecked write. The 8
+call sites that build battery-pause requests (`setPauseSlot`, `setPauseStart`,
+`setPauseEnd`, `setBatteryPauseMode`, and the pause-mode-inclusive branches of
+`FEResume`/`forceExport`/`FCResume`/`forceCharge`) now pass
+`bypass_model_gate=(device.model==Model.HYBRID_HV_GEN3)` - the bypass only ever
+activates for this specific model, leaving the upstream block fully intact (and thus
+whatever protection it's providing) for every other model, including the Gen1
+hardware the block was actually written about.
+
+Verified `device.model==Model.HYBRID_HV_GEN3` evaluates correctly against a real
+`ThreePhaseInverter` instance, and that `request.encode()` (Gate 2) genuinely accepts
+HR(318)/HR(319) rather than assuming it from reading the source.
+
+**Residual risk**, stated plainly: if this specific inverter's firmware *does* turn
+out to exhibit the 0x86 response anomaly the block exists for, a pause-mode write
+will surface as a confusing/crashy error on that one attempt rather than a clean
+"not permitted" rejection - not data loss or a hardware-safety issue, since 318-320
+are a pause toggle and two time registers, not a protection/limit register. Worth
+reporting upstream regardless (dewet22/givenergy-modbus#115) with this HV Gen3
+confirmation, to help get the block properly scoped.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually
