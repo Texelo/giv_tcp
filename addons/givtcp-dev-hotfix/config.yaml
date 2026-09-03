@@ -1,6 +1,6 @@
 name: "GivTCP-DEV (Texelo hotfix)"
 description: "TCP Modbus connection to MQTT/JSON for Givenergy Battery/PV Invertors - 3.5.47 + HV stack API fix"
-version: "3.5.47-hotfix3"
+version: "3.5.47-hotfix4"
 slug: "givtcp-dev-texelo-hotfix"
 homeassistant_api: true
 hassio_api: true

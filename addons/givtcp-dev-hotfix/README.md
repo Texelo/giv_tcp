@@ -71,6 +71,53 @@ All renamed field names and method removals were verified directly against the i
 against them), not just guessed from the error messages. See the diagnosis conversation
 for the full trace.
 
+## hotfix4: write.py (control commands)
+
+While tracing a `setBatteryPauseMode` KeyError (turned out to be triggered by Predbat's
+retry loop on top of the real bug below), found the same incomplete-migration pattern in
+`write.py`: it calls control methods like `device.set_battery_pause_mode(val)` as instance
+methods, but in `givenergy-modbus==2.12.0` most of these are free functions in
+`givenergy_modbus.client.commands`, not methods on the inverter object at all.
+
+Audited every `device.set_*(...)` call in `write.py` (85 call sites) with an AST-based
+script that checks each one against the real installed library's actual signatures
+(instance method vs. `commands.py` function, and argument count/names) — not just the
+ones the logs happened to surface. Found and fixed:
+
+- **12 methods entirely missing as instance calls** (`set_battery_pause_mode`,
+  `set_battery_charge_limit_ac`, `set_battery_discharge_limit_ac`, `set_ems_plant`,
+  `set_pause_slot(_start/_end)`, `set_export_slot(_start/_end)`) — routed through
+  `commands.set_X(...)` instead of `device.set_X(...)`.
+- **3 EMS-aware call sites** (`setChargeTarget2`/`setExportTarget`/`setDischargeTarget`,
+  used for multi-inverter/AIO parallel systems with numbered slots) called methods that
+  never existed under those names at all — mapped to the real equivalents:
+  `commands.set_ems_charge_target_soc`, `set_ems_export_target_soc`,
+  `set_ems_discharge_target_soc`.
+- **`set_charge_target_only`** (3 call sites) doesn't exist anywhere — mapped to
+  `commands.set_charge_target_soc`, which has the matching "set only the target, don't
+  touch the enable bits" semantics per its docstring.
+- **`device._set_charge_slot(...)`** (2 call sites) — leading-underscore typo for the
+  real (public) `device.set_charge_slot(...)`.
+- **`device.enable_charge_target()`** — the old bare "enable, keep whatever target was
+  already set" call has no equivalent in 2.12.0 (`set_charge_target_enabled` now always
+  requires a target value). Re-enables at the last cached `Target_SOC` (falling back to
+  100 if none cached yet) via `commands.set_charge_target_enabled(...)`.
+- A handful of call sites also passed a stale extra `GiV_Settings.inverter_type` argument
+  left over from an old dual LV/HV signature — dropped, since the current API takes just
+  the value.
+- One pre-existing (unrelated to the library bump) syntax bug: `reqs.extend(X, Y)` with
+  two positional args — `list.extend()` only takes one; the stray second argument was
+  removed.
+- Stale `logging.getLogger("givenergy_modbus_async")` (targeting a logger name that no
+  longer exists, so the intended log-level suppression was silently a no-op) updated to
+  `"givenergy_modbus"`.
+
+Verified every fixed call resolves and type-checks against the real installed
+`givenergy-modbus==2.12.0` (same AST-diff script, 0 problems remaining across all 85
+call sites), and confirmed the instance-method wrappers that *do* still exist are thin
+pass-throughs to the exact same `commands.py` functions — so routing through `commands.`
+directly produces identical results, not just "probably works."
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually

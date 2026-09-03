@@ -13,6 +13,7 @@ import pickle,os
 import GivLUT
 from GivLUT import GivLUT, GivQueue
 from givenergy_modbus.model import TimeSlot
+from givenergy_modbus.client import commands
 import requests
 import importlib
 import asyncio
@@ -20,7 +21,7 @@ from logging.handlers import TimedRotatingFileHandler
 
 from GivLUT import GivClientAsync
 
-logging.getLogger("givenergy_modbus_async").setLevel(logging.CRITICAL)
+logging.getLogger("givenergy_modbus").setLevel(logging.CRITICAL)
 
  
 logging.basicConfig(format='%(asctime)s - Inv'+ str(GiV_Settings.givtcp_instance)+ \
@@ -142,7 +143,7 @@ async def sendAsyncCommand(reqs,readloop):
 async def sbcla(device,target,readloop=False):
     temp={}
     try:
-        reqs=device.set_battery_charge_limit_ac(target)
+        reqs=commands.set_battery_charge_limit_ac(target)
         result= await sendAsyncCommand(reqs,readloop)
         if 'error' in result:
             raise Exception
@@ -158,7 +159,7 @@ async def sbdla(device,target,readloop=False):
     temp={}
     try:
         
-        reqs=device.set_battery_discharge_limit_ac(target)
+        reqs=commands.set_battery_discharge_limit_ac(target)
         result= await sendAsyncCommand(reqs,readloop)
         if 'error' in result:
             raise Exception
@@ -302,7 +303,13 @@ async def enableChargeTarget(device,payload,readloop=False):
         if payload['state']=="enable":
             logger.debug("Enabling Charge Target")
             #temp= await ect(readloop)
-            reqs=device.enable_charge_target()
+            # No bare "enable, keep existing target" call in givenergy-modbus 2.12.0 -
+            # re-enable at the last known Target_SOC (100 if none cached yet).
+            cachedTarget=100
+            regCacheStack=GivLUT.get_regcache()
+            if regCacheStack:
+                cachedTarget=int(finditem(regCacheStack[-1],"Target_SOC") or 100)
+            reqs=commands.set_charge_target_enabled(cachedTarget)
             result= await sendAsyncCommand(reqs,readloop)
             if 'error' in result:
                 raise Exception           
@@ -349,7 +356,7 @@ async def setChargeTarget2(device,payload,readloop=False):
         target=int(payload['chargeToPercent'])
         slot=int(payload['slot'])
         logger.debug("Setting Charge Target "+str(slot) + " to: "+str(target))
-        reqs=device.set_charge_target_enabled(slot,int(target))
+        reqs=commands.set_ems_charge_target_soc(slot,int(target))
         result= await sendAsyncCommand(reqs,readloop)
         if 'error' in result:
             raise Exception
@@ -374,7 +381,7 @@ async def setExportTarget(device,payload,readloop=False):
         slot=int(payload['slot'])
         logger.debug("Setting Export Target "+str(slot) + " to: "+str(target))
         #temp= await sest(target,slot,readloop)
-        reqs=device.set_export_soc_target(slot,int(target))
+        reqs=commands.set_ems_export_target_soc(slot,int(target))
         result= await sendAsyncCommand(reqs,readloop)
         if 'error' in result:
             raise Exception
@@ -396,7 +403,7 @@ async def setDischargeTarget(device,payload,readloop=False):
         slot=int(payload['slot'])
         logger.debug("Setting Discharge Target "+str(slot) + " to: "+str(target))
         #temp= await sdct(target,slot,readloop)
-        reqs=device.set_discharge_target(slot,int(target),GiV_Settings.inverter_type.lower())
+        reqs=commands.set_ems_discharge_target_soc(slot,int(target))
         result= await sendAsyncCommand(reqs,readloop)
         if 'error' in result:
             raise Exception
@@ -418,7 +425,7 @@ async def setEmsPlant(device,payload,readloop=False):
         if payload['state']=="enable":
             logger.debug("Enabling EMS Plant Operation")
             #temp= await ect(readloop)
-            reqs=device.set_ems_plant(True)
+            reqs=commands.set_ems_plant(True)
             result= await sendAsyncCommand(reqs,readloop)
             if 'error' in result:
                 raise Exception           
@@ -426,7 +433,7 @@ async def setEmsPlant(device,payload,readloop=False):
         elif payload['state']=="disable":
             logger.debug("Disabling EMS Plant Operation")
             #temp= await dct(readloop)
-            reqs=device.set_ems_plant(False)
+            reqs=commands.set_ems_plant(False)
             result= await sendAsyncCommand(reqs,readloop)
             if 'error' in result:
                 raise Exception           
@@ -533,7 +540,7 @@ async def setChargeRate(device,payload,readloop=False):
             if "3ph" in GiV_Settings.inverter_type.lower() or "gateway" in GiV_Settings.inverter_type.lower():
                 target= round((int(payload['chargeRate'])/invmaxrate)*100,0)
                 logger.debug ("Setting battery charge rate ac to: " + str(payload['chargeRate'])+" ("+str(target)+")")
-                reqs=device.set_battery_charge_limit_ac(target)
+                reqs=commands.set_battery_charge_limit_ac(target)
             else:
                 if int(payload['chargeRate']) < int(invmaxrate):
                     target=int(min((int(payload['chargeRate'])/(batcap/2))*50,50))
@@ -597,7 +604,7 @@ async def setDischargeRate(device,payload,readloop=False):
         try:
             if "3ph" in GiV_Settings.inverter_type.lower() or "gateway" in GiV_Settings.inverter_type.lower():
                 target= round((int(payload['dischargeRate'])/invmaxrate)*100,0)
-                reqs=device.set_battery_discharge_limit_ac(target)
+                reqs=commands.set_battery_discharge_limit_ac(target)
             else:
                 if int(payload['dischargeRate']) < int(invmaxrate):
                     target=int(min((int(payload['dischargeRate'])/(batcap/2))*50,50))
@@ -663,7 +670,7 @@ async def setChargeSlot(device,payload,readloop=False):
 ##############
         reqs=device.set_charge_slot(int(payload['slot']),slot)
         if 'chargeToPercent' in payload.keys():
-            reqs.extend(device.set_charge_target_only(int(payload['chargeToPercent'])))
+            reqs.extend(commands.set_charge_target_soc(int(payload['chargeToPercent'])))
         result= await sendAsyncCommand(reqs,readloop)
         if 'error' in result:
             raise Exception
@@ -690,7 +697,7 @@ async def setPauseSlot(device,payload,readloop=False):
         slot=TimeSlot
         slot.start=datetime.strptime(payload['start'],"%H:%M")
         slot.end=datetime.strptime(payload['finish'],"%H:%M")
-        reqs=device.set_pause_slot(slot)
+        reqs=commands.set_pause_slot(slot)
         result= await sendAsyncCommand(reqs,readloop)
         if 'error' in result:
             raise Exception
@@ -756,7 +763,7 @@ async def setExportSlotStart(device,payload,readloop=False):
     try:
         logger.debug("Setting Export Slot "+str(payload['slot'])+" Start to: "+str(payload['start']))
         #temp= await sess(payload,readloop)
-        reqs=device.set_export_slot_start(int(payload['slot']),datetime.strptime(payload['start'],"%H:%M"))
+        reqs=commands.set_export_slot_start(int(payload['slot']),datetime.strptime(payload['start'],"%H:%M"))
         result= await sendAsyncCommand(reqs,readloop)
         if 'error' in result:
             raise Exception        
@@ -775,7 +782,7 @@ async def setExportSlotEnd(device,payload,readloop=False):
     try:
         logger.debug("Setting Export Slot End "+str(payload['slot'])+" to: "+str(payload['finish']))
         #temp= await sese(payload,readloop)
-        reqs=device.set_export_slot_end(int(payload['slot']),datetime.strptime(payload['finish'],"%H:%M"))
+        reqs=commands.set_export_slot_end(int(payload['slot']),datetime.strptime(payload['finish'],"%H:%M"))
         result= await sendAsyncCommand(reqs,readloop)
         if 'error' in result:
             raise Exception         
@@ -831,7 +838,7 @@ async def setExportSlot(device,payload,readloop=False):
         slot=TimeSlot
         slot.start=datetime.strptime(payload['start'],"%H:%M")
         slot.end=datetime.strptime(payload['finish'],"%H:%M")
-        reqs=device.set_export_slot(int(payload['slot']),slot)
+        reqs=commands.set_export_slot(int(payload['slot']),slot)
         result= await sendAsyncCommand(reqs,readloop)
         if 'error' in result:
             raise Exception
@@ -897,7 +904,7 @@ async def setPauseStart(device,payload,readloop=False):
     try:
         logger.debug("Setting Pause Slot Start to: "+str(payload['start']))
         #temp= await spss(payload,readloop)
-        reqs=device.set_pause_slot_start(datetime.strptime(payload['start'],"%H:%M"))
+        reqs=commands.set_pause_slot_start(datetime.strptime(payload['start'],"%H:%M"))
         result= await sendAsyncCommand(reqs,readloop)
         if 'error' in result:
             raise Exception(result)
@@ -916,7 +923,7 @@ async def setPauseEnd(device,payload,readloop=False):
     try:
         logger.debug("Setting Pause Slot End to: "+str(payload['finish']))
         #temp= await spse(payload,readloop)
-        reqs=device.set_pause_slot_end(datetime.strptime(payload['finish'],"%H:%M"))
+        reqs=commands.set_pause_slot_end(datetime.strptime(payload['finish'],"%H:%M"))
         result= await sendAsyncCommand(reqs,readloop)
         if 'error' in result:
             raise Exception(result)
@@ -957,12 +964,12 @@ async def FEResume(device,revert, readloop=False):
                     target=int(min((int(revert['dischargeRate'])/(batcap/2))*50,50))
             reqs.extend(device.set_battery_discharge_limit(target))
         elif "dischargeRateAC" in revert:
-            reqs.extend(device.set_battery_discharge_limit_ac(revert["dischargeRateAC"]),GiV_Settings.inverter_type)
+            reqs.extend(commands.set_battery_discharge_limit_ac(revert["dischargeRateAC"]))
         if "3ph" in GiV_Settings.inverter_type.lower():
             reqs.extend(device.set_force_discharge(revert["forceDischargeEnable"]))  # turn on Force Export in 3PH
             reqs.extend(device.set_force_charge(revert["forceChargeEnable"]))  # turn off Force Charge in 3PH
         if "batteryPauseMode" in revert:
-            reqs.extend(device.set_battery_pause_mode(GivLUT.battery_pause_mode.index(revert["batteryPauseMode"])))
+            reqs.extend(commands.set_battery_pause_mode(GivLUT.battery_pause_mode.index(revert["batteryPauseMode"])))
         
         result = await sendAsyncCommand(reqs,readloop)
         if result:
@@ -1006,7 +1013,7 @@ async def forceExport(device, exportTime,readloop=False):
             if "Force_Charge_Enable" in regCacheStack[-1]["Control"]:
                 revert["forceChargeEnable"]=regCacheStack[-1]["Control"]["Force_Charge_Enable"]
 
-        reqs=device.set_battery_soc_reserve(4,GiV_Settings.inverter_type.lower())
+        reqs=device.set_battery_soc_reserve(4)
         finish=GivLUT.getTime(datetime.now()+timedelta(minutes=exportTime))
         slot=TimeSlot
         slot.start=datetime.strptime(GivLUT.getTime(datetime.now()),"%H:%M")
@@ -1015,12 +1022,12 @@ async def forceExport(device, exportTime,readloop=False):
         if "3ph" in GiV_Settings.inverter_type.lower():
             reqs.extend(device.set_force_discharge(True))  # turn on Force Export in 3PH
             reqs.extend(device.set_force_charge(False))  # turn off Force Charge in 3PH
-            reqs.extend(device.set_battery_discharge_limit_ac(100,GiV_Settings.inverter_type.lower()))
+            reqs.extend(commands.set_battery_discharge_limit_ac(100))
         else:
             reqs.extend(device.set_battery_discharge_limit(50))
         reqs.extend(device.set_mode_storage(discharge_slot_1=slot,discharge_for_export=True))
         if hasBPM:
-            reqs.extend(device.set_battery_pause_mode(0))
+            reqs.extend(commands.set_battery_pause_mode(0))
         result = await sendAsyncCommand(reqs,readloop)
         frtouch()   #Force full refresh on next run to update control status
         if result:
@@ -1065,7 +1072,7 @@ async def FCResume(device,revert,readloop=False):
                         target=50
             reqs=device.set_battery_charge_limit(target)
         elif "chargeRateAC" in revert:
-            reqs=device.set_battery_charge_limit_ac(revert["chargeRateAC"])
+            reqs=commands.set_battery_charge_limit_ac(revert["chargeRateAC"])
         if revert["chargeScheduleEnable"]=="enable":
             enable=True
         else:
@@ -1074,10 +1081,10 @@ async def FCResume(device,revert,readloop=False):
         slot=TimeSlot
         slot.start=datetime.strptime(revert['start_time'],"%H:%M")
         slot.end=datetime.strptime(revert['end_time'],"%H:%M")
-        reqs.extend(device._set_charge_slot(1,slot))
-        reqs.extend(device.set_charge_target_only(int(revert["targetSOC"])))
+        reqs.extend(device.set_charge_slot(1,slot))
+        reqs.extend(commands.set_charge_target_soc(int(revert["targetSOC"])))
         if "batteryPauseMode" in revert:
-            reqs.extend(device.set_battery_pause_mode(GivLUT.battery_pause_mode.index(revert["batteryPauseMode"])))
+            reqs.extend(commands.set_battery_pause_mode(GivLUT.battery_pause_mode.index(revert["batteryPauseMode"])))
         if "3ph" in GiV_Settings.inverter_type.lower():
             reqs.extend(device.set_force_discharge(revert["forceDischargeEnable"]))  # turn back Force Export in 3PH
             reqs.extend(device.set_force_charge(revert["forceChargeEnable"]))  # turn back Force Charge in 3PH
@@ -1163,13 +1170,13 @@ async def forceCharge(device, chargeTime, readloop=False):
                 revert['forceACChargeEnable']= regCacheStack[-1]["Control"]["Force_AC_Charge_Enable"]
 
         finish=GivLUT.getTime(datetime.now()+timedelta(minutes=chargeTime))
-        reqs=device.set_charge_target_only(100,GiV_Settings.inverter_type.lower())
+        reqs=commands.set_charge_target_soc(100)
         slot=TimeSlot
         slot.start=datetime.strptime(GivLUT.getTime(datetime.now()),"%H:%M")
         slot.end=datetime.strptime(finish,"%H:%M")
-        reqs.extend(device._set_charge_slot(1,slot))
+        reqs.extend(device.set_charge_slot(1,slot))
         if "3ph" in GiV_Settings.inverter_type.lower():
-            reqs.extend(device.set_battery_charge_limit_ac(100,GiV_Settings.inverter_type.lower()))
+            reqs.extend(commands.set_battery_charge_limit_ac(100))
             reqs.extend(device.set_force_charge(True))
             reqs.extend(device.set_ac_charge(True))
         else:
@@ -1178,7 +1185,7 @@ async def forceCharge(device, chargeTime, readloop=False):
 
         # Set Battery Pause Mode only if it exists
         if hasBPM:
-            reqs.extend(device.set_battery_pause_mode(0))
+            reqs.extend(commands.set_battery_pause_mode(0))
         result= await sendAsyncCommand(reqs,readloop)
         frtouch()   #Force full refresh on next run to update control status
         if result:
@@ -1351,7 +1358,7 @@ async def setBatteryPauseMode(device, payload, readloop=False):
         if payload['state'] in GivLUT.battery_pause_mode:
             val=GivLUT.battery_pause_mode.index(payload['state'])
             #temp= await sbpm(val,readloop)
-            reqs=device.set_battery_pause_mode(val)
+            reqs=commands.set_battery_pause_mode(val)
             result= await sendAsyncCommand(reqs,readloop)
             if 'error' in result:
                 raise Exception 
