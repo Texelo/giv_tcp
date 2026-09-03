@@ -41,18 +41,35 @@ in every cycle, and why the real cause was hard to spot from the logs alone.
 
 ## What this fixes
 
+`read.py` was only partially migrated to `givenergy-modbus==2.12.0`'s API. Fixed every
+dead/renamed reference reachable from a three-phase HV inverter's read path
+(`processThreePhaseInfo`, `getRaw`, `getBatteries`, `getInvModel`, `getMeters`,
+`getTimeslots`, `getControls`), found by systematically diffing every attribute these
+functions touch against the real installed library (`model_fields` introspection), not
+just the one the logs happened to hit first:
+
 - `getRaw()`, `getBatteries()`: `plant.HVStack` -> `plant.hv_stacks`, `stack[0]`/`stack[1]`
-  -> `stack.bcu`/`stack.bmus`, renamed `Bcu` fields, `Bmu.get(...)` -> `getattr(...)`,
-  `.getsn()` -> `.serial_number`.
+  -> `stack.bcu`/`stack.bmus`, renamed `Bcu` fields (`number_of_module` ->
+  `number_of_modules`, `battery_nominal_capacity`/`remaining_battery_capacity` -> `*_ah`),
+  `Bmu.get(...)` -> `getattr(...)`, `.getsn()` -> `.serial_number`.
 - `getall()` helper: removed a `model.to_dict()` call that doesn't exist on `Bcu`/`Meter`
   pydantic models (this broke `getRaw()`'s meter dump too, independent of the HVStack bug).
+- `processThreePhaseInfo()`: `p_load_ac1/2/3` and `p_out_ac1/2/3` were hard-removed in
+  2.12.0 (they decoded per-phase power as unsigned/10x-wrong — see the library's own
+  `AttributeError` message) — replaced with `p_meter_active_ac1/2/3` and
+  `p_inverter_active_ac1/2/3`. Also `system_mode` and `battery_priority` are now plain
+  register ints, not Enums, in 2.12.0 — dropped the now-invalid `.name.capitalize()` calls
+  on those two (`System_Mode`/`Battery_Priority` sensors will report the raw register
+  value instead of a decoded label until/unless GivEnergy's register meaning for these is
+  confirmed and remapped).
 - `runAll2()`: `except KeyError` now returns instead of falling through to the
   `UnboundLocalError`.
 
 All renamed field names and method removals were verified directly against the installed
-`givenergy-modbus==2.12.0` package (`model_fields` introspection), and the patched HV
-battery-stack code path was exercised against real `Bcu`/`Bmu`/`HvStack` instances before
-this was built. See the diagnosis conversation for the full trace.
+`givenergy-modbus==2.12.0` package (`model_fields` introspection + constructing real
+`Bcu`/`Bmu`/`HvStack`/`ThreePhaseInverter` instances and exercising the patched code
+against them), not just guessed from the error messages. See the diagnosis conversation
+for the full trace.
 
 ## How this is packaged
 

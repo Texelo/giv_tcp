@@ -1900,13 +1900,13 @@ def processThreePhaseInfo(plant: Plant):
         power_output['Grid_Apparent_Power']=GEInv.p_grid_apparent
         power_output['Meter_Import_Power']=GEInv.p_meter_import
         power_output['Meter_Export_Power']=GEInv.p_meter_export
-        power_output['Load_Phase1_Power']=GEInv.p_load_ac1
-        power_output['Load_Phase2_Power']=GEInv.p_load_ac2
-        power_output['Load_Phase3_Power']=GEInv.p_load_ac3
+        power_output['Load_Phase1_Power']=GEInv.p_meter_active_ac1
+        power_output['Load_Phase2_Power']=GEInv.p_meter_active_ac2
+        power_output['Load_Phase3_Power']=GEInv.p_meter_active_ac3
         power_output['Load_Power']=GEInv.p_load_all
-        power_output['Export_Phase1_Power']=GEInv.p_out_ac1
-        power_output['Export_Phase2_Power']=GEInv.p_out_ac2
-        power_output['Export_Phase3_Power']=GEInv.p_out_ac3
+        power_output['Export_Phase1_Power']=GEInv.p_inverter_active_ac1
+        power_output['Export_Phase2_Power']=GEInv.p_inverter_active_ac2
+        power_output['Export_Phase3_Power']=GEInv.p_inverter_active_ac3
         power_output['PV_Voltage_String_1']=GEInv.v_pv1
         power_output['PV_Voltage_String_2']=GEInv.v_pv2
         power_output['PV_Current_String_1']=GEInv.i_pv1
@@ -1946,14 +1946,14 @@ def processThreePhaseInfo(plant: Plant):
         power_output['SOC_kWh'] = sockwh / count if count > 0 else 0                                      # Average SOC of all stacks...
 
         inverter['status']=GEInv.status.name.capitalize()
-        inverter['System_Mode']=GEInv.system_mode.name.capitalize()
+        inverter['System_Mode']=GEInv.system_mode   # raw register value: no longer an Enum in givenergy-modbus 2.12.0
         inverter['Start_Delay_Time']=GEInv.start_delay_time
         inverter['Power_Factor']=GEInv.power_factor
         inverter['Battery_Type'] = GEInv.battery_type.name.capitalize()
         inverter['Invertor_Type'] = "Gen 3 - " + GEInv.model.name.capitalize()
         inverter['Invertor_Max_Bat_Rate'] = inverterModel.batmaxrate
         inverter['Invertor_Max_Inv_Rate'] = GEInv.inverter_max_power
-        inverter['Battery_Priority']=GEInv.battery_priority.name.capitalize()
+        inverter['Battery_Priority']=GEInv.battery_priority   # raw register value: no longer an Enum in givenergy-modbus 2.12.0
 
     # Calc HV stack capacity as function of stacks
         cap=0
