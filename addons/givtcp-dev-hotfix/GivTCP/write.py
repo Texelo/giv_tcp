@@ -13,7 +13,7 @@ import pickle,os
 import GivLUT
 from GivLUT import GivLUT, GivQueue
 from givenergy_modbus.model import TimeSlot
-from givenergy_modbus.model.inverter import Model
+from givenergy_modbus.model.inverter import Model, resolve_model
 from givenergy_modbus.client import commands
 import requests
 import importlib
@@ -122,6 +122,24 @@ def log_num_writes(reqs):
             pickle.dump(count, outp, pickle.HIGHEST_PROTOCOL)
         with open(GivLUT.safewritecountpkl, 'wb') as outp:
             pickle.dump(safecount, outp, pickle.HIGHEST_PROTOCOL)
+
+def _is_hv_gen3(device):
+    """True if device is genuinely the HYBRID_HV_GEN3 variant.
+
+    device.model decodes HR(0) alone via the library's own Model(dtc) fallback,
+    which only yields the *coarse* family (e.g. Model.ALL_IN_ONE, "8") - it cannot
+    tell HYBRID_HV_GEN3 ("81") apart from ALL_IN_ONE_HYBRID ("82") or HYBRID_GEN4
+    ("83"). Confirmed directly: this system's device.model is Model.ALL_IN_ONE, not
+    Model.HYBRID_HV_GEN3, despite every detect() log line correctly reporting
+    HYBRID_HV_GEN3 (resolved with firmware-version context via resolve_model() -
+    the library's own docstring says as much: "self.model ... would miss the
+    models we special-case"). Mirrors the pattern the library itself uses
+    internally (inverter.py's battery_energy_source lookups).
+    """
+    try:
+        return resolve_model(int(device.device_type_code, 16), int(device.arm_firmware_version)) == Model.HYBRID_HV_GEN3
+    except (TypeError, ValueError, AttributeError):
+        return False
 
 async def sendAsyncCommand(reqs,readloop,bypass_model_gate=False):
     """bypass_model_gate: skip the client's per-model write-safe gate (Gate 1) for
@@ -716,7 +734,7 @@ async def setPauseSlot(device,payload,readloop=False):
         slot.start=datetime.strptime(payload['start'],"%H:%M")
         slot.end=datetime.strptime(payload['finish'],"%H:%M")
         reqs=commands.set_pause_slot(slot)
-        result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=(device.model==Model.HYBRID_HV_GEN3))
+        result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=_is_hv_gen3(device))
         if 'error' in result:
             raise Exception(result.get('error'))
         updateControlCache("Battery_pause_start_time_slot",str(datetime.strptime(payload['start'],"%H:%M")))
@@ -923,7 +941,7 @@ async def setPauseStart(device,payload,readloop=False):
         logger.debug("Setting Pause Slot Start to: "+str(payload['start']))
         #temp= await spss(payload,readloop)
         reqs=commands.set_pause_slot_start(datetime.strptime(payload['start'],"%H:%M"))
-        result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=(device.model==Model.HYBRID_HV_GEN3))
+        result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=_is_hv_gen3(device))
         if 'error' in result:
             raise Exception(result)
         updateControlCache("Battery_pause_start_time_slot",str(datetime.strptime(payload['start'],"%H:%M")),True)
@@ -942,7 +960,7 @@ async def setPauseEnd(device,payload,readloop=False):
         logger.debug("Setting Pause Slot End to: "+str(payload['finish']))
         #temp= await spse(payload,readloop)
         reqs=commands.set_pause_slot_end(datetime.strptime(payload['finish'],"%H:%M"))
-        result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=(device.model==Model.HYBRID_HV_GEN3))
+        result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=_is_hv_gen3(device))
         if 'error' in result:
             raise Exception(result)
         updateControlCache("Battery_pause_end_time_slot",str(datetime.strptime(payload['finish'],"%H:%M")),True)
@@ -989,7 +1007,7 @@ async def FEResume(device,revert, readloop=False):
         if "batteryPauseMode" in revert:
             reqs.extend(commands.set_battery_pause_mode(GivLUT.battery_pause_mode.index(revert["batteryPauseMode"])))
         
-        result = await sendAsyncCommand(reqs,readloop,bypass_model_gate=(device.model==Model.HYBRID_HV_GEN3))
+        result = await sendAsyncCommand(reqs,readloop,bypass_model_gate=_is_hv_gen3(device))
         if result:
             logger.error("Errors in control device: "+str(result))
             raise Exception(result)
@@ -1046,7 +1064,7 @@ async def forceExport(device, exportTime,readloop=False):
         reqs.extend(device.set_mode_storage(discharge_slot_1=slot,discharge_for_export=True))
         if hasBPM:
             reqs.extend(commands.set_battery_pause_mode(0))
-        result = await sendAsyncCommand(reqs,readloop,bypass_model_gate=(device.model==Model.HYBRID_HV_GEN3))
+        result = await sendAsyncCommand(reqs,readloop,bypass_model_gate=_is_hv_gen3(device))
         frtouch()   #Force full refresh on next run to update control status
         if result:
             logger.error("Errors in control device: "+str(result))
@@ -1108,7 +1126,7 @@ async def FCResume(device,revert,readloop=False):
             reqs.extend(device.set_force_charge(revert["forceChargeEnable"]))  # turn back Force Charge in 3PH
             reqs.extend(device.set_ac_charge(revert["forceACChargeEnable"]))  # turn back AC Charge enable in 3PH
 
-        result = await sendAsyncCommand(reqs,readloop,bypass_model_gate=(device.model==Model.HYBRID_HV_GEN3))
+        result = await sendAsyncCommand(reqs,readloop,bypass_model_gate=_is_hv_gen3(device))
         if result:
             logger.error("Errors in control device: "+str(result))
             raise Exception(result)
@@ -1204,7 +1222,7 @@ async def forceCharge(device, chargeTime, readloop=False):
         # Set Battery Pause Mode only if it exists
         if hasBPM:
             reqs.extend(commands.set_battery_pause_mode(0))
-        result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=(device.model==Model.HYBRID_HV_GEN3))
+        result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=_is_hv_gen3(device))
         frtouch()   #Force full refresh on next run to update control status
         if result:
             logger.error("Errors in control device: "+str(result))
@@ -1377,7 +1395,7 @@ async def setBatteryPauseMode(device, payload, readloop=False):
             val=GivLUT.battery_pause_mode.index(payload['state'])
             #temp= await sbpm(val,readloop)
             reqs=commands.set_battery_pause_mode(val)
-            result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=(device.model==Model.HYBRID_HV_GEN3))
+            result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=_is_hv_gen3(device))
             if 'error' in result:
                 raise Exception(result.get('error'))
             updateControlCache("Battery_pause_mode",str(GivLUT.battery_pause_mode[int(val)]))

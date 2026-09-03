@@ -251,6 +251,32 @@ are a pause toggle and two time registers, not a protection/limit register. Wort
 reporting upstream regardless (dewet22/givenergy-modbus#115) with this HV Gen3
 confirmation, to help get the block properly scoped.
 
+## hotfix10: fix the HV Gen3 model check itself (hotfix9 never actually activated)
+
+hotfix9's bypass was correct in design but never fired: `device.model==Model.HYBRID_HV_GEN3`
+was always False on this system. `device.model` decodes HR(0) *alone*, via the
+library's plain `Model(dtc)` constructor - which, per the library's own docstring,
+"only yields the coarse family" when the raw code isn't an exact 1-character match.
+This system's raw device type code is `0x8103` -> hex string `"8103"` -> no exact
+`Model` match -> falls back (via `Model._missing_`) to just the first character,
+`Model("8")` = **`Model.ALL_IN_ONE`** - not `HYBRID_HV_GEN3`. This is exactly what
+the very first startup log in this whole investigation showed ("All_in_one(8103)")
+and was hiding in plain sight the entire time.
+
+The correctly-resolved specific model (what every `detect:` log line actually shows)
+comes from `resolve_model(raw_dtc, arm_fw)`, which additionally uses the firmware
+version to disambiguate `"81"` (HYBRID_HV_GEN3) from `"82"`/`"83"` etc. - the
+library uses exactly this pattern internally (`inverter.py`'s
+`battery_energy_source` lookups) via two separate fields, `device_type_code` (the
+raw hex string) and `arm_firmware_version`, both already present on `device`.
+
+Added `_is_hv_gen3(device)`, calling `resolve_model(int(device.device_type_code, 16),
+int(device.arm_firmware_version)) == Model.HYBRID_HV_GEN3` - swapped into all 8
+`bypass_model_gate=...` call sites from hotfix9. Verified directly: `device.model`
+for this exact `device_type_code`/`arm_firmware_version` pair is confirmed
+`Model.ALL_IN_ONE`, while `_is_hv_gen3()` correctly returns `True` for this system
+and `False` for another model and for missing/malformed data (doesn't crash).
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually
