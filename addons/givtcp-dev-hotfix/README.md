@@ -184,6 +184,28 @@ rebuild cycles.
   --signal=SIGTERM` + timing: exits in ~425ms with the connection-close completing
   first, vs. the full 10s SIGKILL grace period before this fix.
 
+## hotfix8: write.py error surfacing
+
+Every write function's error handling discarded the actual reason for a failure. Two
+compounding issues, both in the same boilerplate repeated ~40-50 times across the file:
+
+- `if 'error' in result: raise Exception` was a *bare* `raise Exception` - it never
+  passed through `result['error']`, the descriptive message `sendAsyncCommand()` had
+  already built (e.g. `"Error in write command: <real reason>"`). Now
+  `raise Exception(result.get('error'))`.
+- Every `except:` block's `e=sys.exc_info()[0].__name__, os.path.basename(...), ...`
+  only ever captured the exception's *class name*, filename and line number - never
+  `str(sys.exc_info()[1])`, the exception's own message. So even with the above fix,
+  the real text still wouldn't have reached the log. Now included in the tuple, so a
+  failure like `Setting Battery Pause Slot failed: ('Exception', 'Error in write
+  command: <real underlying reason>', 'write.py', 703)` actually says why, instead of
+  just the file/line every single time.
+
+Mechanical, logging-only change (verified no other `raise Exception(...)` call sites
+were touched, and no non-`'error' in result:`-guarded `raise Exception` sites were
+affected) - doesn't alter control flow or write behaviour, only what gets logged when
+something fails.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually
