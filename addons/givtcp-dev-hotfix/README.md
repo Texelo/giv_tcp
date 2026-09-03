@@ -144,6 +144,21 @@ Verified the HV module-count fix against real `HvStack`/`Bmu` instances matching
 system's exact detected topology (3 BCU stacks, 3 BMUs) — comes out to a correct nonzero
 `Invertor_Max_Bat_Rate`, not just "no longer zero by accident."
 
+## hotfix6: Target_SOC (and other *_SOC number entities) showing "unknown"
+
+Confirmed via direct REST query (`/readData`) that GivTCP itself correctly reports
+`Control.Target_SOC: 0` once the read-path fixes above are in place - this isn't a data
+bug. The cause is in `HA_Discovery.py`: every MQTT `number` entity whose name contains
+"soc" (Target_SOC, Charge/Discharge/Export_Target_SOC_N, ...) is discovered with
+`min=4` (matching GivEnergy's *write* validation - you can't *set* a target below 4%).
+But the inverter legitimately *reports* 0 when that target/feature is disabled, and
+Home Assistant's MQTT number entity rejects any received state outside its declared
+min/max as invalid - so a real, correct reading of 0 was being silently turned into
+"unknown" by HA itself. Changed the discovered `min` to 0 so HA can display the
+disabled state; writes still go through `commands.set_charge_target_enabled`/
+`set_charge_target_soc`, which enforce the real 4-100 range server-side regardless of
+what the UI's slider allows.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually

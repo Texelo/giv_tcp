@@ -302,7 +302,13 @@ class HAMQTT():
             item=str(topic).split("/")[-1]
             if "soc" in str(item).lower():
                 tempObj['unit_of_meas']="%"
-                tempObj['min']=4
+                # 4 is the valid range for *setting* a target (GivEnergy rejects writes
+                # below 4%), but the inverter reports 0 when the target is disabled -
+                # HA's MQTT number entity rejects any state outside min/max as invalid,
+                # so a real 0 reading was being shown as "unknown" instead. min=0 lets
+                # HA display the disabled state; setChargeTarget/commands.py still
+                # enforce 4-100 server-side on writes.
+                tempObj['min']=0
                 tempObj['max']=100
                 tempObj['mode']="slider"
             elif "limit" in str(item).lower():   #if EVC current
