@@ -118,6 +118,32 @@ call sites), and confirmed the instance-method wrappers that *do* still exist ar
 pass-throughs to the exact same `commands.py` functions — so routing through `commands.`
 directly produces identical results, not just "probably works."
 
+## hotfix5: HV battery count fed into max battery rate + missing Battery_Power_Reserve
+
+Traced a Predbat crash (`ZeroDivisionError: float division by zero` in its charge-curve
+calc, dividing by `Invertor_Max_Bat_Rate`) and a `KeyError: 'Battery_Power_Reserve'` back
+to `read.py`:
+
+- **`getInvModel()`**: `plant.number_batteries` only counts LV battery packs
+  (`capabilities.lv_battery_addresses`) in `givenergy-modbus==2.12.0` — it's *always 0*
+  for an HV system (this is what the very first startup log in this whole investigation
+  showed: "0 batteries" despite 3 detected BCU stacks / BMUs). `batmaxrate = 25 * 80 *
+  plant.number_batteries` therefore came out as exactly 0 for every HV three-phase system,
+  which GivTCP publishes as `Invertor_Max_Bat_Rate: 0` — and Predbat divides by that.
+  Fixed to count HV battery modules across `plant.hv_stacks` instead when
+  `plant.capabilities.is_hv`.
+- **`getControls()`**: three-phase systems only ever set `Battery_Power_Cutoff` (from the
+  now-deprecated `battery_power_cutoff` alias) and never set `Battery_Power_Reserve` at
+  all — the library's own deprecation note confirms HR(1078) is actually a single
+  "Battery Reserve %" register, not a distinct "cutoff" concept, so both keys are now
+  populated from the correctly-named `battery_reserve_soc`. Predbat (and anything else
+  reading `Control.Battery_Power_Reserve` directly) was hitting a `KeyError` on
+  three-phase/HV systems since this key never existed for them.
+
+Verified the HV module-count fix against real `HvStack`/`Bmu` instances matching this
+system's exact detected topology (3 BCU stacks, 3 BMUs) — comes out to a correct nonzero
+`Invertor_Max_Bat_Rate`, not just "no longer zero by accident."
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually

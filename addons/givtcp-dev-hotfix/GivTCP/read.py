@@ -297,7 +297,15 @@ def getInvModel(plant: Plant):
     inverterModel.batterycapacity=GEInv.battery_capacity_kwh        #for HV this is reported Ah times nom voltage (100%)
     # Calc max charge rate
     if plant.capabilities.is_three_phase:
-        inverterModel.batmaxrate= 25 * 80 * plant.number_batteries
+        # plant.number_batteries only counts LV packs (capabilities.lv_battery_addresses)
+        # in givenergy-modbus 2.12.0 - it's always 0 for an HV system, which zeroed out
+        # batmaxrate here and fed a divide-by-zero downstream (e.g. Predbat's charge
+        # curve calc). Count HV battery modules across all stacks instead.
+        if plant.capabilities.is_hv:
+            numBatteryModules = sum(len(stack.bmus) for stack in plant.hv_stacks)
+        else:
+            numBatteryModules = plant.number_batteries
+        inverterModel.batmaxrate= 25 * 80 * numBatteryModules
     elif plant.capabilities.is_gateway:
         inverterModel.batmaxrate=6000*int(GEInv.parallel_aio_num)
         inverterModel.batterycapacity=13.5*int(GEInv.parallel_aio_num)
@@ -730,7 +738,14 @@ def getControls(plant,regCacheStack, inverterModel,multi_output_old=None):
     controlmode['Mode'] = mode
     
     if plant.capabilities.is_three_phase:
-        controlmode['Battery_Power_Cutoff'] = GEInv.battery_power_cutoff
+        # HR(1078) is a single "Battery Reserve %" register on 3ph/HV - the old
+        # "battery_power_cutoff" name was a misnomer (see the library's own
+        # deprecation note on ThreePhaseInverter.battery_power_cutoff). Populate
+        # both keys from it for back-compat with existing Battery_Power_Cutoff
+        # consumers, and because Battery_Power_Reserve was missing entirely here
+        # (Predbat and others read it directly - KeyError otherwise).
+        controlmode['Battery_Power_Cutoff'] = GEInv.battery_reserve_soc
+        controlmode['Battery_Power_Reserve'] = GEInv.battery_reserve_soc
     else:
         controlmode['Battery_Power_Cutoff'] = battery_cutoff
         controlmode['Battery_Power_Reserve'] = battery_reserve
