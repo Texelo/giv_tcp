@@ -6,6 +6,7 @@ from time import sleep
 import json
 import zoneinfo
 import sys
+import signal
 import requests
 import asyncio
 from GivTCP.findInvertor import findInvertor
@@ -22,6 +23,27 @@ rqWorker={}
 redis={}
 networks={}
 SuperTimezone=""
+
+def _handle_sigterm(signum, frame):
+    # Forward termination to the read loop(s) so each gets a chance to close its
+    # Modbus connection cleanly (see GivLUT.GivClientAsync.close_connection) rather
+    # than the container being SIGKILLed with the connection just abandoned - some
+    # GivEnergy dongles keep an abandoned session "active" and refuse/ignore new
+    # connections for a while afterwards.
+    procs = [p for p in selfRun.values() if p.poll() is None]
+    for p in procs:
+        try:
+            p.terminate()
+        except Exception:
+            pass
+    for p in procs:
+        try:
+            p.wait(timeout=5)
+        except Exception:
+            pass
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
 
 
 # Check if config directory exists and creates it if not

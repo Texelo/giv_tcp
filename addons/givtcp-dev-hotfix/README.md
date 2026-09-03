@@ -159,6 +159,31 @@ disabled state; writes still go through `commands.set_charge_target_enabled`/
 `set_charge_target_soc`, which enforce the real 4-100 range server-side regardless of
 what the UI's slider allows.
 
+## hotfix7: graceful shutdown so the dongle doesn't hold a stale session
+
+Neither `startup.py` nor `read.py` handled `SIGTERM` at all - every container stop or
+rebuild abandoned the Modbus connection mid-air rather than closing it. Some GivEnergy
+dongles keep an abandoned session "active" and refuse/ignore new connections for a
+while afterwards (TCP handshake succeeds, but the actual Modbus request/response times
+out) - plausible contributor to the connection issues seen during this session's many
+rebuild cycles.
+
+- `startup.py` (PID 1, no init/tini wrapper) now catches `SIGTERM` and forwards it
+  (`.terminate()`) to the `read.py` subprocess(es) it tracks in `selfRun`, waiting up to
+  5s for them to exit - previously nothing propagated SIGTERM to them at all, so they
+  only ever died via SIGKILL when Docker's grace period expired.
+- `read.py`'s `start()` now installs its own `SIGTERM` handler via
+  `loop.add_signal_handler` and calls a new `GivClientAsync.close_connection()`
+  (added to `GivLUT.py`, reuses the existing connection lock) before exiting.
+- **Verified, not just written**: an isolated repro proved `self_run()`'s bare
+  `except:` swallows `CancelledError`, so `task.cancel()` alone does *not* reliably
+  stop it - it just catches the cancellation and loops back into `watch_plant()`,
+  which would reopen the very connection we're trying to close. Fixed by calling
+  `os._exit(0)` right after our own cleanup completes, rather than trusting
+  cooperative cancellation to finish in time. Confirmed via real `docker kill
+  --signal=SIGTERM` + timing: exits in ~425ms with the connection-close completing
+  first, vs. the full 10s SIGKILL grace period before this fix.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually

@@ -24,6 +24,7 @@ import asyncio
 from typing import Callable, Optional
 from mqtt import GivMQTT
 import copy
+import signal
 
 logging.getLogger("givenergy_modbus").setLevel(logging.ERROR) 
 logging.getLogger("rq.worker").setLevel(logging.CRITICAL)
@@ -2341,8 +2342,43 @@ async def self_run():
             logger.error("Error in self_run. Re-running watch_plant: "+str(e))
             await asyncio.sleep(2)
 
+async def _run_with_shutdown():
+    """Run self_run() but close the Modbus connection cleanly if SIGTERM arrives.
+
+    Without this, a killed container just abandons the connection - some GivEnergy
+    dongles keep that session "active" and refuse/ignore new ones for a while
+    afterwards. self_run()'s own except: is bare (catches CancelledError too), so
+    run_task.cancel() alone doesn't reliably stop it - verified by test: it just
+    catches the cancellation and loops back into watch_plant(), which would reopen
+    the connection we're trying to close. So once our own cleanup is done, we hard
+    -exit rather than trust cooperative cancellation to actually finish in time.
+    """
+    loop = asyncio.get_running_loop()
+    shutdown = asyncio.Event()
+
+    def _on_sigterm():
+        logger.critical("Received SIGTERM - closing Modbus connection before exit")
+        shutdown.set()
+
+    try:
+        loop.add_signal_handler(signal.SIGTERM, _on_sigterm)
+    except NotImplementedError:
+        pass  # not supported on this platform - falls back to the old kill-only behaviour
+
+    run_task = asyncio.ensure_future(self_run())
+    shutdown_task = asyncio.ensure_future(shutdown.wait())
+    await asyncio.wait({run_task, shutdown_task}, return_when=asyncio.FIRST_COMPLETED)
+
+    if shutdown.is_set():
+        run_task.cancel()
+        await GivClientAsync.close_connection()
+        logger.critical("Modbus connection closed, exiting")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
+
 def start():
-    asyncio.run(self_run())
+    asyncio.run(_run_with_shutdown())
 
 
 def publishOutput(array, SN):

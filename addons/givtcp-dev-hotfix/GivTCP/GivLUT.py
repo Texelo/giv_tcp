@@ -83,6 +83,23 @@ class GivClientAsync:
             logger.exception("Unexpected error in get_connection: %s", err)
             raise CommunicationError(str(err)) from err
 
+    async def close_connection():
+        """Close the shared Client connection cleanly, if open.
+
+        Used on graceful shutdown (SIGTERM) so the inverter dongle sees a clean
+        disconnect rather than the connection just vanishing when the process is
+        killed - some GivEnergy dongles keep an abandoned session "active" for a
+        while afterwards and refuse/ignore new connections until it times out.
+        """
+        global _client
+        async with _connection_lock:
+            if getattr(_client, 'connected', False):
+                logger.critical("Closing Modbus connection to %s", str(GiV_Settings.invertorIP))
+                try:
+                    await asyncio.wait_for(_client.close(), timeout=5.0)
+                except Exception:
+                    logger.debug("Timed out or failed to close client during shutdown")
+
 class GivQueue:
     from redis import Redis
     from rq import Queue
