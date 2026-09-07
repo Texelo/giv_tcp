@@ -277,6 +277,47 @@ for this exact `device_type_code`/`arm_firmware_version` pair is confirmed
 `Model.ALL_IN_ONE`, while `_is_hv_gen3()` correctly returns `True` for this system
 and `False` for another model and for missing/malformed data (doesn't crash).
 
+## hotfix11: extend the model-gate bypass to Charge/Discharge/Export Target SOC
+
+`setChargeTarget2`/`setExportTarget`/`setDischargeTarget` call `commands.set_ems_*`,
+targeting the EMS-tier register block (HR2040-2071). Same root cause as the
+pause-mode bug (hotfix9/10): Gate 1 (`write_safe_registers()`, the per-model
+capability gate) only admits this block for `Model.EMS`/`Model.EMS_COMMERCIAL` -
+`is_ems` capability, keyed purely off model taxonomy, never off actual observed
+firmware behaviour. `HYBRID_HV_GEN3` is never `is_ems`, so these three calls were
+always rejected: `HR(2046)/(2064)/(2055) is not permitted for HYBRID_HV_GEN3 inverter`.
+
+Confirmed via the pre-rewrite vendored library (`givenergy_modbus_async`, still
+sitting in this repo's `main`/`dev3`/`modbusv2` branches) that this system's own
+history of working Charge/Discharge/Export Target SOC writes went through this
+exact same register block with **zero write-safety gating at all** - the old
+library never had a Gate 1/Gate 2 concept, it just sent the request. So there's no
+new evidence the firmware rejects these writes; the new library's model taxonomy
+is just incomplete, same conclusion as hotfix9/10.
+
+Checked before bypassing: HR2044-2071 (the whole EMS scheduling block, including
+2046/2049/2052 discharge, 2055/2058/2061 charge, 2064/2067/2070 export) is already
+in Gate 2's universal `WRITE_SAFE_REGISTERS` set - the library's own author
+considers these registers inherently safe to write, independent of model. Only
+Gate 1's per-model check is what's excluding this device. This is the same
+justification structure as hotfix9/10, not a new risk class.
+
+**Explicitly NOT touched**, pending stronger evidence or explicit sign-off:
+- `commands.set_soc_target`/`set_charge_target_only`'s *legacy* per-slot registers
+  (HR242-298, the old non-EMS "Charge/Discharge Target SOC 1-10" block the old
+  library also used) - these are **not** in Gate 2's universal safe set at all
+  (only HR299 has been added, based on GivEnergy-app evidence per the library's
+  own comments), so bypassing would mean skipping the universal PDU-level safety
+  check too, not just the per-model one. Different, larger risk than the EMS-tier
+  bypass above.
+- `setEmsPlant`'s `commands.set_ems_plant(True/False)` (HR2040, `EMS_PLANT_ENABLE`)
+  - also EMS-tier and also blocked by the same Gate 1 taxonomy gap, but this
+  toggles the inverter's actual EMS-controlled operating mode rather than writing
+  a target value; not currently exercised by Predbat or seen failing in any log
+  from this system, so left alone rather than flipped speculatively.
+
+Wired into the same 3 call sites: `sendAsyncCommand(reqs,readloop,bypass_model_gate=_is_hv_gen3(device))`.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually

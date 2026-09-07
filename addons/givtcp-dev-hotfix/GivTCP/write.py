@@ -393,7 +393,7 @@ async def setChargeTarget2(device,payload,readloop=False):
         slot=int(payload['slot'])
         logger.debug("Setting Charge Target "+str(slot) + " to: "+str(target))
         reqs=commands.set_ems_charge_target_soc(slot,int(target))
-        result= await sendAsyncCommand(reqs,readloop)
+        result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=_is_hv_gen3(device))
         if 'error' in result:
             raise Exception(result.get('error'))
         if 'ems' in GiV_Settings.inverter_type.lower():
@@ -418,7 +418,7 @@ async def setExportTarget(device,payload,readloop=False):
         logger.debug("Setting Export Target "+str(slot) + " to: "+str(target))
         #temp= await sest(target,slot,readloop)
         reqs=commands.set_ems_export_target_soc(slot,int(target))
-        result= await sendAsyncCommand(reqs,readloop)
+        result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=_is_hv_gen3(device))
         if 'error' in result:
             raise Exception(result.get('error'))
         temp['result']="Setting Export Target "+str(slot) + " was a success"
@@ -440,7 +440,7 @@ async def setDischargeTarget(device,payload,readloop=False):
         logger.debug("Setting Discharge Target "+str(slot) + " to: "+str(target))
         #temp= await sdct(target,slot,readloop)
         reqs=commands.set_ems_discharge_target_soc(slot,int(target))
-        result= await sendAsyncCommand(reqs,readloop)
+        result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=_is_hv_gen3(device))
         if 'error' in result:
             raise Exception(result.get('error'))
         if 'ems' in GiV_Settings.inverter_type.lower():
