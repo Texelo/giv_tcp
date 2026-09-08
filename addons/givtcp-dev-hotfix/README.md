@@ -318,6 +318,58 @@ justification structure as hotfix9/10, not a new risk class.
 
 Wired into the same 3 call sites: `sendAsyncCommand(reqs,readloop,bypass_model_gate=_is_hv_gen3(device))`.
 
+## hotfix12: read-back for registers the library can write but can't decode for this model
+
+Two gaps found after hotfix11 shipped and started writing successfully:
+
+**1. EMS Target SOC read-back was never confirmed.** hotfix11's writes go through
+`sendAsyncCommand(bypass_model_gate=True)`, which skips Gate 1 (the per-model write
+check) but nothing else - but `plant.ems` (the only place the library exposes
+HR2044-2071 as Python fields) is hard-gated to `Model.EMS`/`Model.EMS_COMMERCIAL` by
+`model/plant.py`'s `ems` property, keyed off `device_type` directly, not a capability
+flag. And the client's own `load_config()`/`refresh()` never even *polls* HR2040+
+unless `caps.is_ems`. So there was no way, in the normal poll path, to tell whether
+those writes actually stuck versus landing in a register nobody ever reads back.
+
+**2. `Timeslots.Battery_pause_start_time_slot` went missing entirely once the louder
+error was fixed.** Reported by Predbat: `KeyError: 'Battery_pause_start_time_slot'`
+in its `adjust_pause_mode`, climbing steadily. Root cause: `ThreePhaseInverterRegisterGetter`
+has *no* pause-slot field in its register map at all (`grep -n pause` on
+`inverter_threephase.py` returns nothing) - only `SinglePhaseInverterRegisterGetter`
+defines `battery_pause_slot_1` (HR319/320). Confirmed empirically:
+`ThreePhaseInverter.from_register_cache(...).battery_pause_slot_1` returns `None`
+unconditionally, regardless of what's actually in the cache. `getTimeslots()`'s
+`GEInv.battery_pause_slot_1 is not None` guard was therefore always False for this
+model, so the two pause-slot keys were silently never added - not a crash, just a
+quietly-omitted key, which is exactly what a naive `dict[key]` access downstream
+(Predbat) turns into a `KeyError`. This has nothing to do with hotfix11 specifically;
+it's been true since the library rewrite. It only became the *visible* error once
+hotfix11 fixed the louder `HR(2046) not permitted` rejection that was previously
+dominating Predbat's error log.
+
+Both are the same shape of problem as the write-side bug: the library's per-model
+Python class is missing a field/poll for something HR-addressable and already
+proven writable on this hardware. Fix is a raw diagnostic read, same technique as
+the write bypass but for reads (which were never gated to begin with - Gate 1/2
+only apply to writes):
+
+- `_readEmsTargetDiag()` (new, in `read.py`) issues two extra `ReadHoldingRegistersRequest`s
+  per refresh cycle when `not is_ems and device_type == Model.HYBRID_HV_GEN3`:
+  `HR(2044,28)` for the EMS scheduling block, decoded field-by-field into the
+  existing `EMS_Discharge/Charge_Target_SOC_N` / `Export_Target_SOC_N` key names;
+  and `HR(319,2)` for the pause slot, decoded via `TimeSlot.from_repr()` (the same
+  decoder `Converter.timeslot` uses internally, including its `60`-means-unset
+  sentinel guard) rather than hand-rolling the bit layout.
+- Wired into both refresh points in `watch_plant()` (cold-start and the main loop).
+- `getControls()` merges the SOC keys in; `getTimeslots()` falls back to the pause-slot
+  values only when `battery_pause_slot_1 is None` (i.e. only for models with no native
+  field), preserving the original single-phase path untouched.
+- Each of the two raw reads fails independently and never raises into the main
+  refresh cycle - a timeout on one bank doesn't blank the other's last-good values,
+  and `validateTimeslot()`'s existing last-known-good/midnight-default fallback
+  covers the case where the diagnostic hasn't completed yet (e.g. first cycle after
+  a restart).
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually

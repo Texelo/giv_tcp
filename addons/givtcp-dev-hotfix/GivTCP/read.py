@@ -4,6 +4,7 @@ from givenergy_modbus.model.plant import Plant, PlantCapabilities
 from givenergy_modbus.model.register import HR
 from givenergy_modbus.exceptions import CommunicationError
 from givenergy_modbus.model import TimeSlot
+from givenergy_modbus.pdu.read_registers import ReadHoldingRegistersRequest
 import sys
 import json
 import logging
@@ -33,6 +34,68 @@ sys.path.append(GiV_Settings.default_path)
 
 givLUT = Entity_Type.entity_type
 logger = GivLUT.logger
+
+# hotfix12: read-back cache for registers the library writes (via the hotfix9-11
+# model-gate bypass) but has no model field to decode back for HYBRID_HV_GEN3:
+#  - HR2044-2071 (EMS discharge/charge/export slot+target block): plant.ems is
+#    hard-gated to Model.EMS/EMS_COMMERCIAL (model/plant.py's `ems` property
+#    checks device_type directly) and the client's own load_config()/refresh()
+#    never polls HR2040+ unless caps.is_ems - so nothing in the normal poll path
+#    would ever confirm those writes stick.
+#  - HR319/320 (battery pause slot start/end): ThreePhaseInverterRegisterGetter's
+#    REGISTER_LUT has no pause-slot entry at all (only SinglePhaseInverter does),
+#    so GEInv.battery_pause_slot_1 is unconditionally None on this model - not
+#    because the write failed, but because there's no field to read it into.
+#    Confirmed empirically: ThreePhaseInverter.from_register_cache(...).battery_pause_slot_1
+#    returns None regardless of cache contents. Predbat then KeyErrors on
+#    Timeslots.Battery_pause_start_time_slot, which getTimeslots() never sets.
+# Each sub-read fails independently so one bank's outage doesn't blank the other's
+# last-good values. Populated by _readEmsTargetDiag() in watch_plant(), consumed
+# by getControls() (SOC keys) and getTimeslots() (pause-slot keys).
+_ems_target_diag = {}
+
+async def _readEmsTargetDiag(client):
+    """Best-effort raw reads for registers this model's library class can't decode
+    itself. Read-only - no gate to bypass, Gate 1/2 only apply to writes. Never
+    raises: diagnostic only, must not break the main refresh cycle if the inverter
+    doesn't answer one of these banks."""
+    inverter_addr = client.plant.capabilities.inverter_address
+    try:
+        req = ReadHoldingRegistersRequest(base_register=2044, register_count=28, device_address=inverter_addr)
+        resp = await client.send_request_and_await_response(req, timeout=1.5, retries=1)
+        vals = resp.register_values
+        base = resp.base_register
+        def reg(n):
+            return vals[n - base]
+        _ems_target_diag.update({
+            "EMS_Discharge_Target_SOC_1": reg(2046),
+            "EMS_Discharge_Target_SOC_2": reg(2049),
+            "EMS_Discharge_Target_SOC_3": reg(2052),
+            "EMS_Charge_Target_SOC_1": reg(2055),
+            "EMS_Charge_Target_SOC_2": reg(2058),
+            "EMS_Charge_Target_SOC_3": reg(2061),
+            "Export_Target_SOC_1": reg(2064),
+            "Export_Target_SOC_2": reg(2067),
+            "Export_Target_SOC_3": reg(2070),
+        })
+    except Exception as e:
+        logger.debug("EMS target-SOC diagnostic read failed (non-fatal): "+str(e))
+
+    try:
+        req = ReadHoldingRegistersRequest(base_register=319, register_count=2, device_address=inverter_addr)
+        resp = await client.send_request_and_await_response(req, timeout=1.5, retries=1)
+        start_raw, end_raw = resp.register_values[0], resp.register_values[1]
+        # 60 is the device's own sentinel for "unset" (portal shows '--:--') - same
+        # guard the library's Converter.timeslot applies before calling from_repr,
+        # which otherwise raises ValueError on it.
+        if start_raw == 60 or end_raw == 60:
+            slot = None
+        else:
+            slot = TimeSlot.from_repr(start_raw, end_raw)
+        _ems_target_diag["Battery_pause_start_time"] = slot.start if slot else None
+        _ems_target_diag["Battery_pause_end_time"] = slot.end if slot else None
+    except Exception as e:
+        logger.debug("Battery pause slot diagnostic read failed (non-fatal): "+str(e))
 
 def commsFailure():
     fname="commsfailure_"+str(GiV_Settings.givtcp_instance)+".pkl"
@@ -94,6 +157,8 @@ async def watch_plant(
             except:
                 pass
             await client.refresh()
+            if not client.plant.capabilities.is_ems and client.plant.capabilities.device_type == Model.HYBRID_HV_GEN3:
+                await _readEmsTargetDiag(client)
             #await client.close()
             if client.plant.capabilities.is_gateway==True:
                 if client.plant.gateway.parallel_aio_num < 2:
@@ -235,6 +300,8 @@ async def watch_plant(
                             await client.refresh()
                             if fullRefresh:
                                 await client.load_config()  #Run full HR read on fullRefresh
+                            if not client.plant.capabilities.is_ems and client.plant.capabilities.device_type == Model.HYBRID_HV_GEN3:
+                                await _readEmsTargetDiag(client)
                         except Exception as res:
                             hasTimeout=True
                             logger.debug("Timeout Error: "+str(res.__class__.__name__))
@@ -593,9 +660,17 @@ def getTimeslots(plant: Plant, multi_output_old=None):
     except:
         logger.debug("New Charge/Discharge timeslots don't exist for this model")
 
-    if not plant.capabilities.device_type in [Model.HYBRID_GEN1, Model.AC] and GEInv.battery_pause_slot_1 is not None:   #Battery Pause slots not on Gen 1 Hybrid or AC only
-        timeslots['Battery_pause_start_time_slot'] = validateTimeslot(GEInv.battery_pause_slot_1.start,"Battery_pause_start_time_slot",multi_output_old)
-        timeslots['Battery_pause_end_time_slot'] = validateTimeslot(GEInv.battery_pause_slot_1.end,"Battery_pause_end_time_slot",multi_output_old)
+    if not plant.capabilities.device_type in [Model.HYBRID_GEN1, Model.AC]:   #Battery Pause slots not on Gen 1 Hybrid or AC only
+        if GEInv.battery_pause_slot_1 is not None:
+            timeslots['Battery_pause_start_time_slot'] = validateTimeslot(GEInv.battery_pause_slot_1.start,"Battery_pause_start_time_slot",multi_output_old)
+            timeslots['Battery_pause_end_time_slot'] = validateTimeslot(GEInv.battery_pause_slot_1.end,"Battery_pause_end_time_slot",multi_output_old)
+        else:
+            # hotfix12: ThreePhaseInverter has no pause-slot field at all (see
+            # _ems_target_diag's docstring) so battery_pause_slot_1 is always None
+            # here - fall back to the raw register diagnostic read instead of
+            # silently omitting these keys (which is what Predbat KeyErrors on).
+            timeslots['Battery_pause_start_time_slot'] = validateTimeslot(_ems_target_diag.get("Battery_pause_start_time"),"Battery_pause_start_time_slot",multi_output_old)
+            timeslots['Battery_pause_end_time_slot'] = validateTimeslot(_ems_target_diag.get("Battery_pause_end_time"),"Battery_pause_end_time_slot",multi_output_old)
     return timeslots,controlmode
 
 
@@ -750,7 +825,16 @@ def getControls(plant,regCacheStack, inverterModel,multi_output_old=None):
     else:
         controlmode['Battery_Power_Cutoff'] = battery_cutoff
         controlmode['Battery_Power_Reserve'] = battery_reserve
-        
+
+    # hotfix12: surface the read-back for the EMS-tier Target SOC registers
+    # write.py's hotfix11 bypass writes to (HR2044-2071). plant.ems is hard-gated
+    # to Model.EMS/EMS_COMMERCIAL so it's never populated here; _ems_target_diag
+    # is a raw read collected separately in watch_plant() - see its definition
+    # for why. Empty dict (not yet read, or last read failed) means these keys
+    # are simply omitted rather than shown stale/wrong.
+    if _ems_target_diag:
+        controlmode.update(_ems_target_diag)
+
     controlmode['Target_SOC'] = target_soc
     controlmode['Sync_Time'] = "disable"
 
