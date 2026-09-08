@@ -53,6 +53,16 @@ logger = GivLUT.logger
 # last-good values. Populated by _readEmsTargetDiag() in watch_plant(), consumed
 # by getControls() (SOC keys) and getTimeslots() (pause-slot keys).
 _ems_target_diag = {}
+# The subset of _ems_target_diag meant for direct publishing under Control - i.e.
+# keys entity_lut.py actually has a GEType for. Battery_pause_start_time/
+# Battery_pause_end_time are deliberately excluded: they're raw datetime.time
+# values consumed only by getTimeslots()'s validateTimeslot() call, never
+# published as-is.
+_EMS_TARGET_SOC_KEYS = (
+    "EMS_Discharge_Target_SOC_1", "EMS_Discharge_Target_SOC_2", "EMS_Discharge_Target_SOC_3",
+    "EMS_Charge_Target_SOC_1", "EMS_Charge_Target_SOC_2", "EMS_Charge_Target_SOC_3",
+    "Export_Target_SOC_1", "Export_Target_SOC_2", "Export_Target_SOC_3",
+)
 
 async def _readEmsTargetDiag(client):
     """Best-effort raw reads for registers this model's library class can't decode
@@ -78,8 +88,9 @@ async def _readEmsTargetDiag(client):
             "Export_Target_SOC_2": reg(2067),
             "Export_Target_SOC_3": reg(2070),
         })
+        logger.debug("EMS target-SOC diagnostic read OK: "+str({k: _ems_target_diag[k] for k in _EMS_TARGET_SOC_KEYS}))
     except Exception as e:
-        logger.debug("EMS target-SOC diagnostic read failed (non-fatal): "+str(e))
+        logger.debug("EMS target-SOC diagnostic read failed (non-fatal): "+str(sys.exc_info()[0].__name__)+": "+str(e))
 
     try:
         req = ReadHoldingRegistersRequest(base_register=319, register_count=2, device_address=inverter_addr)
@@ -94,8 +105,9 @@ async def _readEmsTargetDiag(client):
             slot = TimeSlot.from_repr(start_raw, end_raw)
         _ems_target_diag["Battery_pause_start_time"] = slot.start if slot else None
         _ems_target_diag["Battery_pause_end_time"] = slot.end if slot else None
+        logger.debug("Battery pause slot diagnostic read OK: raw=(%s,%s) decoded=%s", start_raw, end_raw, slot)
     except Exception as e:
-        logger.debug("Battery pause slot diagnostic read failed (non-fatal): "+str(e))
+        logger.debug("Battery pause slot diagnostic read failed (non-fatal): "+str(sys.exc_info()[0].__name__)+": "+str(e))
 
 def commsFailure():
     fname="commsfailure_"+str(GiV_Settings.givtcp_instance)+".pkl"
@@ -669,6 +681,7 @@ def getTimeslots(plant: Plant, multi_output_old=None):
             # _ems_target_diag's docstring) so battery_pause_slot_1 is always None
             # here - fall back to the raw register diagnostic read instead of
             # silently omitting these keys (which is what Predbat KeyErrors on).
+            logger.debug("battery_pause_slot_1 not modelled for this device_type - using _ems_target_diag fallback: "+str({k: _ems_target_diag.get(k) for k in ("Battery_pause_start_time","Battery_pause_end_time")}))
             timeslots['Battery_pause_start_time_slot'] = validateTimeslot(_ems_target_diag.get("Battery_pause_start_time"),"Battery_pause_start_time_slot",multi_output_old)
             timeslots['Battery_pause_end_time_slot'] = validateTimeslot(_ems_target_diag.get("Battery_pause_end_time"),"Battery_pause_end_time_slot",multi_output_old)
     return timeslots,controlmode
@@ -832,8 +845,19 @@ def getControls(plant,regCacheStack, inverterModel,multi_output_old=None):
     # is a raw read collected separately in watch_plant() - see its definition
     # for why. Empty dict (not yet read, or last read failed) means these keys
     # are simply omitted rather than shown stale/wrong.
-    if _ems_target_diag:
-        controlmode.update(_ems_target_diag)
+    # hotfix12.1: must whitelist, not blanket .update() - _ems_target_diag also
+    # holds Battery_pause_start_time/Battery_pause_end_time (raw datetime.time,
+    # consumed only by getTimeslots()'s .get() below). A blanket merge leaked
+    # those un-suffixed keys into Control too, and entity_lut.py only defines
+    # the "..._time_slot"-suffixed names - HA_Discovery.py's LUT lookup KeyErrors
+    # on anything it doesn't recognise, taking down the whole discovery publish.
+    merged = [key for key in _EMS_TARGET_SOC_KEYS if key in _ems_target_diag]
+    for key in merged:
+        controlmode[key] = _ems_target_diag[key]
+    if merged:
+        logger.debug("getControls: merged EMS target-SOC diagnostic keys: "+str(merged))
+    else:
+        logger.debug("getControls: no EMS target-SOC diagnostic data available yet (cache empty)")
 
     controlmode['Target_SOC'] = target_soc
     controlmode['Sync_Time'] = "disable"

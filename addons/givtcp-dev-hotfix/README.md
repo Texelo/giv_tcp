@@ -370,6 +370,27 @@ only apply to writes):
   covers the case where the diagnostic hasn't completed yet (e.g. first cycle after
   a restart).
 
+## hotfix13: fix HA discovery crash introduced by hotfix12
+
+hotfix12 broke MQTT discovery entirely on the next cold start:
+`publish_discovery2: Error connecting to MQTT Broker: ('KeyError', 'HA_Discovery.py', 66)`.
+
+Root cause: `getControls()` merged `_ems_target_diag` into `Control` with a blanket
+`controlmode.update(_ems_target_diag)` - but that cache dict also holds
+`Battery_pause_start_time`/`Battery_pause_end_time` (raw `datetime.time` values,
+meant only for `getTimeslots()`'s internal `.get()` lookup, never for direct
+publishing). Those un-suffixed keys have no `entity_lut.py` entry (only the
+`..._time_slot`-suffixed pair does), and `HA_Discovery.py`'s topic-to-entity-type
+lookup (`Entity_Type.entity_type[key]`) has no fallback for an unrecognised key -
+it KeyErrors, and since the whole discovery publish runs as one MQTT connection
+inside one try block, one bad key takes down every entity's discovery message for
+that cycle, not just the one field.
+
+Fixed by whitelisting exactly the 9 SOC keys `getControls()` should publish
+(`_EMS_TARGET_SOC_KEYS`) instead of blanket-merging the diagnostic cache -
+`Battery_pause_start_time`/`_end_time` stay internal to `_ems_target_diag`,
+read only via `getTimeslots()`'s existing `.get()` calls.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually
