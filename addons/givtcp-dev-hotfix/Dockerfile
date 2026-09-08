@@ -24,6 +24,14 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt --no-cache-dir
 
+# Vendor patch: HYBRID_HV_GEN3 write-safety fix not yet released upstream (fork:
+# github.com/Texelo/givenergy-modbus, branch hv-gen3-legacy-target-soc, based on
+# the 2.13.0 tag pinned above — same version, two files overridden). See README.md
+# "hotfix14" for the full patch rationale; see the patched files' own module
+# docstrings for the register-level evidence.
+COPY vendor_patches/givenergy_modbus/model/manifest.py /usr/local/lib/python3.14/site-packages/givenergy_modbus/model/manifest.py
+COPY vendor_patches/givenergy_modbus/pdu/write_registers.py /usr/local/lib/python3.14/site-packages/givenergy_modbus/pdu/write_registers.py
+
 COPY ingress.conf /etc/nginx/http.d/
 RUN rm -f /etc/nginx/http.d/default.conf
 

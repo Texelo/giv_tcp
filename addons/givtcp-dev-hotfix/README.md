@@ -391,6 +391,110 @@ Fixed by whitelisting exactly the 9 SOC keys `getControls()` should publish
 `Battery_pause_start_time`/`_end_time` stay internal to `_ems_target_diag`,
 read only via `getTimeslots()`'s existing `.get()` calls.
 
+## hotfix14: upgrade to givenergy-modbus 2.13.0 + upstream fork patch for legacy Target SOC
+
+Two-part fix, both stemming from the same discovery: upstream's 2.13.0 release
+(one version ahead of the 2.12.0 this addon had pinned since hotfix3) contains a
+real-hardware-verified fix (dewet22/givenergy-modbus#412, hass#295) that
+`Model.HYBRID_HV_GEN3` was misclassified as three-phase - it's actually
+single-phase. Confirmed directly against this system's own live data before
+touching anything: `SOC` was reading `0` while `SOC_kWh: 80.73` and the battery
+stack's own `Stack_SOC_High/Low` read 62/61% - along with `PV_Power`, all
+`PV_Voltage/Current_String_*`, `Grid_Phase1/2/3_Voltage`, `Load_Phase1/2/3_Power`,
+`Export_Phase1/2/3_Power`, and `Battery_Charge/Discharge_Power` all flat zero. This
+is the exact "live but idle plant" fingerprint from the upstream capture, present
+on this system too, not just the similar unit upstream captured.
+
+**Part 1: the reclassification itself (upstream, adopted as-is).** Bumped
+`givenergy-modbus` 2.12.0 -> 2.13.0. This flips `plant.capabilities.is_three_phase`
+to `False` for this model, which changes which top-level function
+`processData()` dispatches to: `processInverterInfo()` instead of
+`processThreePhaseInfo()` - a code path this system has never actually run
+before (the misclassification put it on the three-phase path since day one of
+the library rewrite). Audited before shipping, not assumed safe:
+
+- Every `GEInv.*` attribute `processInverterInfo()`/`getControls()`/
+  `getTimeslots()`/`getBatteries()`/`getInvModel()` touch verified against a real
+  `SinglePhaseInverter` instance from 2.13.0 - all resolve; the one exception
+  (`p_inverter_out`) is dead/commented code, never executed.
+- Found and fixed 3 places that assumed `plant.number_batteries`/`plant.batteries`
+  (LV-only, always 0/empty for this HV system - the exact hotfix5 finding,
+  previously only fixed in the three-phase path) instead of using the HV-stack
+  count like `getInvModel()`/`getBatteries()`/`getRaw()` already correctly did:
+  `getInvModel()`'s `batmaxrate` calc (was gated on `is_three_phase` alone, now
+  also fires for this model specifically via the correctly-resolved
+  `plant.capabilities.device_type` - NOT `GEInv.model`, which only decodes the
+  coarse family for this device, see `_is_hv_gen3()` in write.py), and two spots
+  in `processInverterInfo()` (`Battery_Charge/Discharge_Energy_Total_kWh` and the
+  entire `SOC`/battery-power block, which was skipping `SOC` entirely rather than
+  just reading it wrong).
+- Deliberately scoped narrowly: `getInvModel()`'s fix checks `device_type ==
+  Model.HYBRID_HV_GEN3` specifically rather than widening to `is_hv` generally,
+  because `Model.ALL_IN_ONE` is also `is_hv` and must keep its existing flat-6000
+  `batmaxrate` path unchanged - not verified/tested and out of scope here.
+- `getTimeslots()`'s pause-slot fallback (hotfix12/13) and its `EMS_target_diag`
+  reads (hotfix12) are unaffected either way: `SinglePhaseInverter` natively has
+  `battery_pause_slot_1` (unlike `ThreePhaseInverter`), so the hotfix12/13 raw-read
+  path simply stops being exercised for this model rather than needing removal.
+- `write.py`'s phase branching (`if "3ph" in GiV_Settings.inverter_type.lower()`)
+  is driven by a stored GivTCP config value, not `plant.capabilities.is_three_phase`
+  - unaffected by this change either way. That config value was independently
+  found to already be wrong for this system (`Model_1 = All_in_one` in
+  `/settings`, the same coarse-decode issue as `GEInv.model` above) but left
+  alone - a pre-existing, unrelated display/config issue, not something this
+  library bump introduces or fixes.
+
+**Part 2: legacy Target SOC write-safety (our own patch, forked from 2.13.0).**
+2.13.0's reclassification does not by itself fix the actual bug this session was
+chasing (Predbat's `setDischargeTarget` succeeding at the Modbus layer via the
+hotfix11 EMS-tier bypass but never changing `Control.Discharge_Target_SOC_1`,
+because that field reads from a completely different, legacy register HR272
+that the EMS-tier write never touches). Gate 1 (`write_safe_registers()`) never
+included the legacy per-slot Target SOC registers (HR242-269 charge, HR272-299
+discharge) for any model; Gate 2 only had HR299 (added under upstream's
+original app-inventory sweep, #48).
+
+Forked `dewet22/givenergy-modbus` -> `Texelo/givenergy-modbus`, branch
+`hv-gen3-legacy-target-soc` off the `v2.13.0` tag. Re-auditing
+`docs/reference/registers/app_4.0.7_inventory.json` directly (not assumed)
+found the other 19 registers in this family equally present in the app's own
+inventory (`model_codes` in that file confirms `0x8103` = `"GIV-HY-10.0-G3-HV
+10KW"`, i.e. this exact model) - an omission in the original sweep, not a gap
+in evidence. Added all 20 to Gate 2 (alongside HR299, same evidence tier) and a
+new `WRITE_SAFE_HYBRID_HV_GEN3_LEGACY_TARGETS` set to Gate 1, unioned only for
+`Model.HYBRID_HV_GEN3` specifically - the app inventory isn't per-model scoped,
+so it doesn't by itself establish every extended-slot model (HYBRID_GEN4,
+ALL_IN_ONE, ALL_IN_ONE_HYBRID) supports every register in this family; only
+this one was cross-checked. Corroborated further by the pre-rewrite vendored
+client (`givenergy_modbus_async`, no write-safety gating of any kind) having
+used this exact register family against this exact hardware for an extended
+period, per this system's own working history before the library rewrite.
+
+Full upstream test suite (1666 tests) and ruff pass against the patch. Added two
+new tests pinning the exact register set and that it doesn't leak to other
+extended-slot models; updated the existing 1:1 write-surface fence test (#412)
+for the new union. Regenerated the app-reconciliation baseline via the
+project's own documented script - clean +20 diff, no other changes. Pushed to
+`Texelo/givenergy-modbus`, branch `hv-gen3-legacy-target-soc`
+(https://github.com/Texelo/givenergy-modbus/pull/new/hv-gen3-legacy-target-soc)
+- worth opening as a real PR upstream given the evidence, not done yet pending
+confirmation this actually resolves the live issue.
+
+**How it's wired into this addon**: not installed via pip from the fork (avoids
+a build-time network/git dependency after already being burned once by
+scarf.sh rate-limiting). `requirements.txt` still pins the plain PyPI
+`givenergy-modbus==2.13.0`; the two patched files
+(`model/manifest.py`, `pdu/write_registers.py`) are vendored into this repo
+under `vendor_patches/` and `COPY`'d over the pip-installed package in the
+`Dockerfile`, after `pip install`. Same diff either way, no extra build-time
+dependency.
+
+**Not yet done**: the write.py bypass calls (`bypass_model_gate=_is_hv_gen3(device)`)
+for the three EMS Target SOC functions (hotfix11) were left as-is rather than
+switched to the now-correctly-permitted legacy registers - untangling which of
+EMS-tier vs legacy-per-slot is what Predbat/the real inverter actually need is
+the next thing to verify against live behaviour before touching write.py again.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually

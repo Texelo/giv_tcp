@@ -376,9 +376,22 @@ def getInvModel(plant: Plant):
     inverterModel.batmaxrate=GEInv.battery_max_power
     inverterModel.batterycapacity=GEInv.battery_capacity_kwh        #for HV this is reported Ah times nom voltage (100%)
     # Calc max charge rate
-    if plant.capabilities.is_three_phase:
+    # hotfix14: was `if plant.capabilities.is_three_phase:` alone, correct for the HV
+    # three-phase systems (e.g. GIV-3HY-11) this was originally written for. But
+    # HYBRID_HV_GEN3 reclassified single-phase in givenergy-modbus 2.13.0 (hass#295 -
+    # it was never actually three-phase hardware) falls straight through this branch
+    # now, silently losing the HV-module-count fix hotfix5 added here (batmaxrate=0 ->
+    # Predbat divide-by-zero, the exact bug hotfix5 fixed, regressing for this one
+    # model). Added explicitly rather than widened to `is_hv` generally: is_hv is
+    # also true for ALL_IN_ONE, which must keep hitting the flat-6000 branch below
+    # exactly as before - this device's plant.capabilities.device_type (the
+    # correctly-resolved specific model; GEInv.model/inverterModel.model only
+    # decodes the coarse family for this device - see write.py's _is_hv_gen3()
+    # docstring) is checked instead of widening the is_hv condition to avoid
+    # changing behaviour for any other model.
+    if plant.capabilities.is_three_phase or plant.capabilities.device_type == Model.HYBRID_HV_GEN3:
         # plant.number_batteries only counts LV packs (capabilities.lv_battery_addresses)
-        # in givenergy-modbus 2.12.0 - it's always 0 for an HV system, which zeroed out
+        # in givenergy-modbus 2.12.0+ - it's always 0 for an HV system, which zeroed out
         # batmaxrate here and fed a divide-by-zero downstream (e.g. Predbat's charge
         # curve calc). Count HV battery modules across all stacks instead.
         if plant.capabilities.is_hv:
@@ -1116,6 +1129,20 @@ def processInverterInfo(plant: Plant):
         GEBat=plant.batteries
         isHV=plant.capabilities.is_hv
         inverterModel=getInvModel(plant)
+        # hotfix14: this whole function was only reachable for non-three-phase,
+        # non-EMS, non-gateway models before givenergy-modbus 2.13.0 reclassified
+        # HYBRID_HV_GEN3 single-phase (hass#295) - it now runs for this HV system
+        # for the first time, and its two "are there batteries" checks below
+        # (`if not isHV:` and `if int(plant.number_batteries) > 0:`) both predate
+        # that and assume LV: plant.batteries/plant.number_batteries are LV-only
+        # (capabilities.lv_battery_addresses), always empty/0 for an HV system - see
+        # getInvModel()'s and hotfix5's identical finding. Compute the HV-aware
+        # module count once and use it everywhere this function would otherwise
+        # ask "are there batteries" via the LV-only path.
+        if isHV:
+            numHVBatteryModules = sum(len(stack.bmus) for stack in plant.hv_stacks)
+        else:
+            numHVBatteryModules = 0
         
         # Grab previous data from Pickle and use it validate any outrageous changes
         regCacheStack = GivLUT.get_regcache()
@@ -1141,7 +1168,16 @@ def processInverterInfo(plant: Plant):
     ############  Energy Stats    ############
         # Total Energy Figures
         logger.debug("Getting Total Energy Data")
-        if not isHV:
+        if isHV:
+            # hotfix14: no LV "alt1" fallback branch here - that's specifically for
+            # older LV firmware's known register-shift quirk (see the non-HV branch
+            # below), not applicable to HV Gen3. e_battery_charge_total/
+            # e_battery_discharge_total are plain inverter-level registers, safe to
+            # read directly regardless of HV/LV.
+            if numHVBatteryModules>0:
+                energy_total_output['Battery_Charge_Energy_Total_kWh'] = GEInv.e_battery_charge_total
+                energy_total_output['Battery_Discharge_Energy_Total_kWh'] = GEInv.e_battery_discharge_total
+        else:
             #if GEInv.e_battery_charge_total == 0 and GEInv.e_battery_discharge_total == 0 and not GiV_Settings.numBatteries==0:  # If no values in "nomal" registers then grab from back up registers - for some f/w versions
             if len(GEBat)>0:
                 if GEInv.e_battery_charge_total == 0 and GEInv.e_battery_discharge_total == 0:  # If no values in "nomal" registers then grab from back up registers - for some f/w versions
@@ -1334,7 +1370,12 @@ def processInverterInfo(plant: Plant):
 
         ######## Battery Stats only if there are batteries...  ########
 
-        if int(plant.number_batteries) > 0:  # only do this if there are batteries
+        # hotfix14: plant.number_batteries is LV-only (see numHVBatteryModules'
+        # definition above) - was always 0 for this HV system, skipping this entire
+        # block (SOC included) rather than just missing a couple of energy-total
+        # keys like the block above. GEInv.battery_soc etc. are plain inverter-level
+        # registers same as above, unaffected by HV/LV - only the gate was wrong.
+        if numHVBatteryModules>0 or int(plant.number_batteries) > 0:  # only do this if there are batteries
 
             logger.debug("Getting SOC")
             if GEInv.battery_soc != 0 or GEInv.battery_calibration_stage !=0:        #if we're in calibration mode accept any value
