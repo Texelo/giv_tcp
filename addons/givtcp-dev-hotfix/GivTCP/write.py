@@ -15,6 +15,7 @@ from GivLUT import GivLUT, GivQueue
 from givenergy_modbus.model import TimeSlot
 from givenergy_modbus.model.inverter import Model, resolve_model
 from givenergy_modbus.client import commands
+from givenergy_modbus.pdu.write_registers import WriteHoldingRegisterRequest
 import requests
 import importlib
 import asyncio
@@ -140,6 +141,38 @@ def _is_hv_gen3(device):
         return resolve_model(int(device.device_type_code, 16), int(device.arm_firmware_version)) == Model.HYBRID_HV_GEN3
     except (TypeError, ValueError, AttributeError):
         return False
+
+def _legacy_target_soc_request(discharge, slot, target_soc):
+    """Build a raw write for the legacy per-slot Charge/Discharge Target SOC
+    registers (HR242-269 charge, HR272-299 discharge - the third register of
+    each HR240-299 extended-slot triple), admitted to both write gates for
+    Model.HYBRID_HV_GEN3 by the vendor_patches/ fork (hotfix14). This is the
+    register family Control.Discharge_Target_SOC_N/Charge_Target_SOC_N (what
+    Predbat validates writes against - see getTimeslots() in read.py) actually
+    reads from; the EMS-tier registers hotfix11 wrote to (HR2044-2071, still
+    used by setExportTarget - no legacy equivalent exists for Export Target)
+    are a different, unrelated block that GivTCP never reads back for a
+    non-EMS system, so writes there landed nowhere Predbat or the inverter's
+    own control logic actually looks. No commands.py helper exists for this
+    legacy register family (only the EMS-tier one does), hence building the
+    request directly rather than calling a library command function - same
+    reasoning the library's own pre-rewrite set_soc_target() used for the
+    same registers (see hotfix11's README section for the historical
+    reference this whole patch is based on).
+
+    Raises ValueError for target_soc outside [4,100] - the PDU layer itself
+    doesn't bounds-check the value (only rejects out-of-uint16-range), so this
+    replicates the same guard commands.set_ems_discharge_target_soc() and the
+    old vendored library's set_soc_target() both had, which building the
+    request directly bypasses.
+    """
+    if not 4 <= target_soc <= 100:
+        raise ValueError(f"Target SOC ({target_soc}) must be in [4-100]%")
+    if not 1 <= slot <= 10:
+        raise ValueError(f"Slot ({slot}) must be in [1-10]")
+    base = 272 if discharge else 242
+    register = base + 3 * (slot - 1)
+    return [WriteHoldingRegisterRequest(register, target_soc)]
 
 async def sendAsyncCommand(reqs,readloop,bypass_model_gate=False):
     """bypass_model_gate: skip the client's per-model write-safe gate (Gate 1) for
@@ -418,8 +451,15 @@ async def setChargeTarget2(device,payload,readloop=False):
         target=int(payload['chargeToPercent'])
         slot=int(payload['slot'])
         logger.debug("Setting Charge Target "+str(slot) + " to: "+str(target))
-        reqs=commands.set_ems_charge_target_soc(slot,int(target))
-        result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=_is_hv_gen3(device))
+        is_hv_gen3=_is_hv_gen3(device)
+        if is_hv_gen3:
+            # hotfix17: HR242-269 (legacy per-slot Charge Target SOC), not the
+            # EMS-tier register commands.set_ems_charge_target_soc() writes to -
+            # see _legacy_target_soc_request()'s docstring for why.
+            reqs=_legacy_target_soc_request(discharge=False,slot=slot,target_soc=int(target))
+        else:
+            reqs=commands.set_ems_charge_target_soc(slot,int(target))
+        result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=is_hv_gen3)
         if 'error' in result:
             raise Exception(result.get('error'))
         if 'ems' in GiV_Settings.inverter_type.lower():
@@ -465,8 +505,15 @@ async def setDischargeTarget(device,payload,readloop=False):
         slot=int(payload['slot'])
         logger.debug("Setting Discharge Target "+str(slot) + " to: "+str(target))
         #temp= await sdct(target,slot,readloop)
-        reqs=commands.set_ems_discharge_target_soc(slot,int(target))
-        result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=_is_hv_gen3(device))
+        is_hv_gen3=_is_hv_gen3(device)
+        if is_hv_gen3:
+            # hotfix17: HR272-299 (legacy per-slot Discharge Target SOC), not the
+            # EMS-tier register commands.set_ems_discharge_target_soc() writes to -
+            # see _legacy_target_soc_request()'s docstring for why.
+            reqs=_legacy_target_soc_request(discharge=True,slot=slot,target_soc=int(target))
+        else:
+            reqs=commands.set_ems_discharge_target_soc(slot,int(target))
+        result= await sendAsyncCommand(reqs,readloop,bypass_model_gate=is_hv_gen3)
         if 'error' in result:
             raise Exception(result.get('error'))
         if 'ems' in GiV_Settings.inverter_type.lower():

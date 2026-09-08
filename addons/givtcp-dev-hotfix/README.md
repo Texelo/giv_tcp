@@ -575,6 +575,45 @@ already-open connection instead of a second process opening a competing one)
 first seeing whether the changes above meaningfully reduce lockout frequency
 on their own.
 
+## hotfix17: actually write Charge/Discharge Target SOC to the register Predbat reads back
+
+The register-permission gap (hotfix14) and the register write.py actually writes
+to were two separate bugs, and only the first one was fixed until now.
+`setChargeTarget2`/`setDischargeTarget` were still calling
+`commands.set_ems_charge/discharge_target_soc()`, writing to the EMS-tier block
+(HR2044-2071) via the hotfix9-11 model-gate bypass. But `getTimeslots()`
+(read.py) populates `Control.Charge/Discharge_Target_SOC_N` - what Predbat
+validates its own writes against - from the completely different legacy
+per-slot registers (HR242-269/272-299) that hotfix14's write-gate patch
+targeted. Confirmed live before fixing: right after a restart,
+`Discharge_Target_SOC_1` read back `10`, not whatever had last actually been
+requested - the EMS-tier write was landing somewhere nothing reads back for a
+non-EMS system, exactly as flagged (but not yet confirmed) when hotfix14
+shipped.
+
+Added `_legacy_target_soc_request()`: builds a raw `WriteHoldingRegisterRequest`
+for the correct register (`242 + 3*(slot-1)` charge, `272 + 3*(slot-1)`
+discharge - matching the derivation `hass#295`'s own fixture test uses for the
+sibling start/end slot registers), since no `commands.py` helper exists for
+this register family (only the EMS-tier one does). Replicates the `[4,100]`
+bounds check the EMS-tier command functions had, since the PDU layer itself
+doesn't validate the value, only that it's a valid uint16. Wired into both
+`setChargeTarget2` and `setDischargeTarget`, gated on `_is_hv_gen3(device)`
+exactly like the existing pause-mode/EMS bypasses - falls back to the prior
+EMS-tier behaviour if the device ever isn't detected as HV Gen3, rather than
+crashing.
+
+**`setExportTarget` intentionally left unchanged** - there is no legacy
+register for Export Target SOC in either the old or new library (confirmed
+earlier this session: it was always HR2062-2071, EMS-tier, even in the
+pre-rewrite vendored client). Whether Export Target actually works for this
+non-EMS system is still an open question, separate from this fix.
+
+Verified all 20 slot->register mappings (both charge and discharge, all 10
+slots) against the real patched library before shipping: every one passes
+`ensure_valid_state()` (Gate 2) and resolves to the expected `HR272-299` /
+`HR242-269` address.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually
