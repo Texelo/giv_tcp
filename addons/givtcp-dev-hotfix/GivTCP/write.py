@@ -154,6 +154,19 @@ async def sendAsyncCommand(reqs,readloop,bypass_model_gate=False):
     only set this after confirming the connected device's model is not the Gen1
     hardware that block was actually about (see call sites) - it is a narrow,
     model-checked exception, not a blanket bypass.
+
+    retries=2 (with the library's own default retry_delay=0.5 backoff) on both
+    paths below - was retries=0 on both (the library's own one_shot_command()
+    default, and this function's own explicit 0 on the bypass path). The
+    library's send_request_and_await_response() docstring explains retry_delay
+    exists specifically "to overcome the multi-second silent-window failure mode
+    observed in the field" - protection that never actually ran with retries=0.
+    Root-caused via a blank write.py error ("Error in write command: " with
+    nothing after the colon): the exception being caught here is a bare
+    TimeoutError with an empty str(), consistent with a single unretried timeout
+    against an occasionally-slow Modbus connection - not a register/permission
+    problem (those raise InvalidPduState with a specific "HR(N) is not permitted"
+    message, unaffected by this change).
     """
     output={}
     asyncclient=await GivClientAsync.get_connection()
@@ -163,11 +176,14 @@ async def sendAsyncCommand(reqs,readloop,bypass_model_gate=False):
     try:
         if bypass_model_gate:
             for req in reqs:
-                await asyncclient.send_request_and_await_response(req, timeout=1.5, retries=0)
+                await asyncclient.send_request_and_await_response(req, timeout=1.5, retries=2, retry_delay=0.5)
         else:
-            await asyncclient.one_shot_command(reqs)
+            await asyncclient.one_shot_command(reqs, timeout=1.5, retries=2, retry_delay=0.5)
     except Exception as e:
-        output['error']="Error in write command: "+str(e)
+        # Fall back to the exception's type name when str(e) is empty (e.g. a bare
+        # TimeoutError()) - a blank message here is what made this dead-end to
+        # diagnose from the log alone in the first place.
+        output['error']="Error in write command: "+(str(e) or type(e).__name__)
     if not readloop:
         #if write command came from somewhere other than the read loop then close the connection at the end
         logger.info("Closing non readloop modbus connection")

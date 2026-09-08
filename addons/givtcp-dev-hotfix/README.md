@@ -495,6 +495,36 @@ switched to the now-correctly-permitted legacy registers - untangling which of
 EMS-tier vs legacy-per-slot is what Predbat/the real inverter actually need is
 the next thing to verify against live behaviour before touching write.py again.
 
+## hotfix15: retry writes instead of failing on a single timeout; stop swallowing blank exceptions
+
+Diagnosed via a live log entry: `Setting Discharge Target 1 failed: ('Exception',
+'Error in write command: ', 'write.py', 445)` - note the blank message, nothing
+after the colon. Traced to `sendAsyncCommand()`'s `except Exception as e:
+output['error']="Error in write command: "+str(e)`: the caught exception's
+`str()` was empty, consistent with a bare `TimeoutError()` (that's what
+`asyncio.wait_for()`/the library's own timeout machinery raises with no args) -
+not a register/permission problem (those raise `InvalidPduState` with a specific
+`"HR(N) is not permitted"` message, distinguishable from this).
+
+Root cause: both write paths in `sendAsyncCommand()` were calling into the
+library with `retries=0` - the bypass path explicitly (my own hotfix9 code), the
+gated path implicitly (`one_shot_command()`'s own default). The library's
+`send_request_and_await_response()` docstring explains it added a
+`retry_delay`-backed retry specifically "to overcome the multi-second
+silent-window failure mode observed in the field" - protection that never ran
+with `retries=0`. A transient Modbus timeout that a retry would absorb instead
+surfaced immediately as a write failure.
+
+Two changes: `retries=2` (library default `retry_delay=0.5` backoff) on both
+`one_shot_command()` and `send_request_and_await_response()` calls - safe to
+retry blindly since every write here is idempotent (setting a target
+percentage/timeslot to a specific value has the same effect whether sent once
+or three times, unlike an increment/toggle). And a fallback in the except
+block - `str(e) or type(e).__name__` - so a future blank-message exception at
+least names its type instead of being a dead end to diagnose from the log alone,
+same spirit as hotfix8's original error-surfacing fix but covering the case
+where the underlying exception itself has no message text.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually
