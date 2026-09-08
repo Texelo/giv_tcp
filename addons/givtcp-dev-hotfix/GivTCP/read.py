@@ -72,7 +72,14 @@ async def _readEmsTargetDiag(client):
     inverter_addr = client.plant.capabilities.inverter_address
     try:
         req = ReadHoldingRegistersRequest(base_register=2044, register_count=28, device_address=inverter_addr)
-        resp = await client.send_request_and_await_response(req, timeout=1.5, retries=1)
+        # hotfix16: was timeout=1.5, retries=1 - tighter than watch_plant()'s own
+        # refresh defaults (timeout=3, retries=5), so these debug-only diagnostic
+        # reads were failing more readily than the reads around them (a likely
+        # contributor to the "X of 7 register reads failed" log noise, since these
+        # count toward that same per-cycle read set). Loosened, not matched
+        # exactly: still lower than the main refresh's retries=5 since these are
+        # supplementary/debug data, not required for the core cycle to succeed.
+        resp = await client.send_request_and_await_response(req, timeout=3, retries=2)
         vals = resp.register_values
         base = resp.base_register
         def reg(n):
@@ -94,7 +101,8 @@ async def _readEmsTargetDiag(client):
 
     try:
         req = ReadHoldingRegistersRequest(base_register=319, register_count=2, device_address=inverter_addr)
-        resp = await client.send_request_and_await_response(req, timeout=1.5, retries=1)
+        # hotfix16: same timeout/retries loosening as the EMS block above.
+        resp = await client.send_request_and_await_response(req, timeout=3, retries=2)
         start_raw, end_raw = resp.register_values[0], resp.register_values[1]
         # 60 is the device's own sentinel for "unset" (portal shows '--:--') - same
         # guard the library's Converter.timeslot applies before calling from_repr,

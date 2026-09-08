@@ -525,6 +525,56 @@ least names its type instead of being a dead end to diagnose from the log alone,
 same spirit as hotfix8's original error-surfacing fix but covering the case
 where the underlying exception itself has no message text.
 
+## hotfix16: Phase 1 network-hardening (from the cowork analysis)
+
+Folds in the low-risk items from a network-contention analysis done in parallel
+(a second Claude instance with Home Assistant MCP access, cross-checking the
+addon's own connection architecture and the vendored library). It independently
+found the same root cause hotfix15 already fixed (zero-retry writes / the blank
+"Error in write command: " message) and proposed a refinement worth adopting on
+top, plus two more low-risk items:
+
+- **`queue_retries` wired up for real.** hotfix15 hardcoded `retries=2` on both
+  `sendAsyncCommand()` write paths. `queue_retries` was an existing
+  `settings_template.py` field ("the number of calls to the inverter when
+  trying to set a register", default 2) that was dead code - never read
+  anywhere outside the template. Now used for real, with the hardcoded `2` as
+  a fallback if the setting is ever absent/invalid. This system already has it
+  set to `4` (confirmed live), so this is a free improvement with no code
+  change needed to take effect - just picks up the value that was already
+  configured and previously ignored.
+- **Loosened `_readEmsTargetDiag()`'s two diagnostic reads** (hotfix12) from
+  `timeout=1.5, retries=1` to `timeout=3, retries=2` - closer to (though still
+  below) `watch_plant()`'s own refresh defaults (`timeout=3, retries=5`).
+  These are debug-only supplementary reads that count toward the same
+  per-cycle read set as the main refresh, so their tighter budget was a likely
+  contributor to the "X of 7 register reads failed" log noise seen after
+  hotfix13 turned debug logging on.
+- **Gunicorn REST workers: 3 -> 1** (`startup.py`, both the initial spawn and
+  the restart-on-crash branch). Each REST worker is a separate OS process, and
+  each opens its own independent Modbus TCP connection on demand
+  (`sendAsyncCommand` -> `GivClientAsync.get_connection()`) - the
+  `asyncio.Lock` guarding that in `GivLUT.py` only serialises coroutines
+  *inside one process*, so 3 workers could open 3 connections concurrently, on
+  top of the read loop's own already-open one. GivEnergy dongles are widely
+  reported to tolerate only one active Modbus session - this doesn't eliminate
+  contention with the read loop (that needs a real architectural fix, tracked
+  separately, not done here), but it removes REST-workers-vs-each-other as an
+  additional source of it. Trade-off: a slow/hung write now blocks the next
+  REST request instead of another worker picking it up - accepted given
+  writes are infrequent and Predbat's own REST client already retries with
+  backoff on its side.
+
+**Deliberately not done in this pass** (per the same analysis, correctly
+scoped out): generalizing the Gate-1 write-safety bypass beyond HV Gen3 for
+other inverter models (doesn't affect this system, which already has its own
+`_is_hv_gen3()` bypass), and the larger structural fix for read-loop/REST
+connection contention (routing every write through the read loop's own
+already-open connection instead of a second process opening a competing one)
+- correctly identified as the real fix but too large/risky to ship without
+first seeing whether the changes above meaningfully reduce lockout frequency
+on their own.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually

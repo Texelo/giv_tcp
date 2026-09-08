@@ -715,7 +715,21 @@ for inv in range(1,setts['number_of_inverters']+1):
         
         GUPORT=6344+inv
         logger.debug ("Starting Gunicorn on port "+str(GUPORT))
-        command=shlex.split("/usr/local/bin/gunicorn -w 3 -b :"+str(GUPORT)+" REST:giv_api")
+        # hotfix16: was -w 3. Each REST worker is a separate OS process, and each
+        # one opens its own independent Modbus TCP connection on demand (write.py's
+        # sendAsyncCommand -> GivLUT.GivClientAsync.get_connection()) - the
+        # asyncio.Lock guarding that in GivLUT.py only serialises coroutines inside
+        # one process, so 3 workers could open 3 connections concurrently on top of
+        # the read loop's own already-open one. GivEnergy dongles are widely
+        # reported to tolerate only one active Modbus session. Dropping to 1 worker
+        # caps REST-side concurrency at a single connection - doesn't eliminate
+        # contention with the read loop's own connection (that needs a real fix,
+        # not a worker-count change), but removes REST-workers-vs-each-other as an
+        # additional source of it. Trade-off: a slow/hung write now blocks the next
+        # REST request instead of another worker picking it up - acceptable given
+        # writes are infrequent and Predbat's own REST client already retries with
+        # backoff on its side.
+        command=shlex.split("/usr/local/bin/gunicorn -w 1 -b :"+str(GUPORT)+" REST:giv_api")
         gunicorn[inv]=subprocess.Popen(command)
 
 
@@ -804,7 +818,8 @@ while True:
                 os.chdir(PATH)
                 GUPORT=6344+inv
                 logger.info ("Starting Gunicorn on port "+str(GUPORT))
-                command=shlex.split("/usr/local/bin/gunicorn -w 3 -b :"+str(GUPORT)+" REST:giv_api")
+                # hotfix16: matches the initial spawn above - see its comment.
+                command=shlex.split("/usr/local/bin/gunicorn -w 1 -b :"+str(GUPORT)+" REST:giv_api")
                 gunicorn[inv]=subprocess.Popen(command)
         
         if setts['MQTT_Address']=="127.0.0.1":

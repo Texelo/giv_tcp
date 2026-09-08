@@ -155,20 +155,30 @@ async def sendAsyncCommand(reqs,readloop,bypass_model_gate=False):
     hardware that block was actually about (see call sites) - it is a narrow,
     model-checked exception, not a blanket bypass.
 
-    retries=2 (with the library's own default retry_delay=0.5 backoff) on both
-    paths below - was retries=0 on both (the library's own one_shot_command()
-    default, and this function's own explicit 0 on the bypass path). The
-    library's send_request_and_await_response() docstring explains retry_delay
-    exists specifically "to overcome the multi-second silent-window failure mode
-    observed in the field" - protection that never actually ran with retries=0.
-    Root-caused via a blank write.py error ("Error in write command: " with
-    nothing after the colon): the exception being caught here is a bare
-    TimeoutError with an empty str(), consistent with a single unretried timeout
-    against an occasionally-slow Modbus connection - not a register/permission
-    problem (those raise InvalidPduState with a specific "HR(N) is not permitted"
-    message, unaffected by this change).
+    retries= GiV_Settings.queue_retries (with the library's own default
+    retry_delay=0.5 backoff) on both paths below - was retries=0 on both (the
+    library's own one_shot_command() default, and this function's own explicit 0
+    on the bypass path). The library's send_request_and_await_response()
+    docstring explains retry_delay exists specifically "to overcome the
+    multi-second silent-window failure mode observed in the field" - protection
+    that never actually ran with retries=0. Root-caused via a blank write.py
+    error ("Error in write command: " with nothing after the colon): the
+    exception being caught here is a bare TimeoutError with an empty str(),
+    consistent with a single unretried timeout against an occasionally-slow
+    Modbus connection - not a register/permission problem (those raise
+    InvalidPduState with a specific "HR(N) is not permitted" message, unaffected
+    by this change).
+
+    queue_retries is an existing settings_template.py field ("the number of
+    calls to the inverter when trying to set a register", default 2) that was
+    previously dead code - read nowhere outside the settings template. Using it
+    here for real means it's already user-tunable without a redeploy.
     """
     output={}
+    try:
+        retries=int(GiV_Settings.queue_retries)
+    except (TypeError, ValueError, AttributeError):
+        retries=2  # settings_template.py's own default, if the setting is somehow absent/invalid
     asyncclient=await GivClientAsync.get_connection()
     if not asyncclient.connected:
         logger.info("Write client not connected after import")
@@ -176,9 +186,9 @@ async def sendAsyncCommand(reqs,readloop,bypass_model_gate=False):
     try:
         if bypass_model_gate:
             for req in reqs:
-                await asyncclient.send_request_and_await_response(req, timeout=1.5, retries=2, retry_delay=0.5)
+                await asyncclient.send_request_and_await_response(req, timeout=1.5, retries=retries, retry_delay=0.5)
         else:
-            await asyncclient.one_shot_command(reqs, timeout=1.5, retries=2, retry_delay=0.5)
+            await asyncclient.one_shot_command(reqs, timeout=1.5, retries=retries, retry_delay=0.5)
     except Exception as e:
         # Fall back to the exception's type name when str(e) is empty (e.g. a bare
         # TimeoutError()) - a blank message here is what made this dead-end to
