@@ -252,7 +252,7 @@ class Entity_Type():
         "Temp_Pause_Charge_Num":GEType("number","","tempPauseCharge",0,250,True,False,False),
         "Force_Charge_Num":GEType("number","","forceCharge",0,250,True,False,False),
         "Force_Export_Num":GEType("number","","forceExport",0,250,True,False,False),
-        "Reboot_Invertor":GEType("button","","rebootInverter","","",False,False,False),
+        "Reboot_Invertor":GEType("button","","rebootinverter","","",False,False,False),
         "Reboot_Addon":GEType("button","","rebootAddon","","",False,False,False),
         "Discharge_Time_Remaining":GEType("sensor","","",0,20000,True,False,False),
         "Charge_Time_Remaining":GEType("sensor","","",0,20000,True,False,False),

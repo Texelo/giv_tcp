@@ -179,7 +179,7 @@ class GivMQTT():
                 payload['state']=str(message.payload.decode("utf-8"))
                 #wr.enableChargeSchedule(payload)
                 requestcommand(command,payload)
-            elif command=="rebootInverter":
+            elif command=="rebootinverter":
                 #wr.rebootinverter()
                 requestcommand(command,payload)
             elif command=="rebootAddon":

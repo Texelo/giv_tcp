@@ -647,6 +647,49 @@ rather than `error` since `getRaw()`'s output is a diagnostic/raw dump, not
 the primary battery data path `getBatteries()` already logs the same event
 for at `error` level in the same cycle.
 
+## hotfix19: the "reboot inverter" button/switch has never actually rebooted the inverter
+
+Live-investigated during an active outage (Modbus TCP port 8899 refusing every
+connection while ICMP ping to the dongle stayed up - GivTCP's own
+"Restarting container to detect IP change" auto-recovery kept firing every
+~70-90s without fixing anything, since it only restarts this addon's own
+process/container - never touches the inverter itself - and does so on
+`host_network: true`, so even a full container restart doesn't reset any
+networking state either).
+
+This raised the question of why Predbat's own `auto_restart` sequence
+(step 1: `switch.turn_on` on `switch.givtcp_{geserial}_reboot_invertor`) would
+be expected to help, since - if it worked - it's the only step of the three
+that reaches the *inverter* rather than just this addon's container. Traced
+it and found it never has worked, for either the button or switch variant of
+this control:
+
+- `entity_lut.py`'s `Reboot_Invertor` declared its MQTT/button command name
+  as `"rebootInverter"` (capital I).
+- `write.py`'s actual function is `rebootinverter` (lowercase i).
+- `read.py`'s write-command dispatcher (`if hasattr(write, command[0]):`) is a
+  **silent** guard - a name that doesn't resolve just drops the command, no
+  error, no log line, nothing.
+- `hasattr(write, "rebootInverter")` is always `False`, so every reboot
+  request sent via MQTT (the button, or the separate stale
+  `switch.givtcp_{geserial}_reboot_invertor` entity left over from an older
+  GivTCP version and still targeted by Predbat's `apps.yaml` today) has been
+  silently dropped this entire time - the inverter never actually reboots.
+- `REST.py`'s `/reboot` endpoint was already correct (calls
+  `requestcommand("rebootinverter")`, lowercase, matching `write.py`) - the
+  bug was scoped to the MQTT-triggered button/switch path only.
+
+Fixed by changing `entity_lut.py`'s declared command name and `mqtt.py`'s
+matching `elif` branch to `rebootinverter` (lowercase), matching the three
+already-correct references (`write.py`'s function, both `REST.py` lines)
+rather than renaming the function itself. `Reboot_Addon` was checked too and
+found consistently cased everywhere already (`rebootAddon`) - not affected.
+
+**Not yet resolved**: whether an actual inverter reboot (now that the control
+path works) fixes this specific "Modbus port refuses connections, ping still
+answers" failure mode is a live open question, being tested directly against
+the outage this was found during, not assumed from the code fix alone.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually
