@@ -614,6 +614,39 @@ slots) against the real patched library before shipping: every one passes
 `ensure_valid_state()` (Gate 2) and resolves to the expected `HR272-299` /
 `HR242-269` address.
 
+## hotfix18: getRaw() missing the invalid-BMU guard getBatteries() already has
+
+Live failure loop: every read cycle threw `TypeError: '<' not supported
+between instances of 'NoneType' and 'str'` while serializing
+`raw['HV_Battery_Stacks']['Stack_0']`, and the same error broke `/readData`
+(`getCache()`) - the endpoint Predbat polls via `givtcp_rest` - meaning
+Predbat was failing to read from GivTCP on every poll.
+
+`getRaw()` and `getBatteries()` both loop over each stack's BMUs with the
+same pattern:
+```python
+if b.is_valid():
+    sn=b.serial_number
+else:
+    sn=b.serial_number
+```
+- a no-op `if/else` (identical in both branches). `getBatteries()` (the
+correct sibling) follows this with a real guard,
+`if sn and sn.upper().isupper():`, skipping invalid/serial-less BMUs before
+ever using `sn` as a dict key (logging "Battery Object empty so skipping").
+`getRaw()` never got that guard - it did `stack[sn]=b` unconditionally, so
+a currently-invalid BMU (confirmed happening live, matching
+"Battery Object empty so skipping" from `getBatteries()` in the same cycle)
+landed in the dict with key `None` next to the other stacks' string keys,
+and `json.dumps(..., sort_keys=True)` can't compare `None` to `str`.
+
+Fixed `getRaw()` to use the same skip-and-log guard `getBatteries()` already
+uses, and dropped the dead `is_valid()`/`else` no-op (the real check is on
+`sn` itself, matching the sibling function exactly). Logged at `debug` level
+rather than `error` since `getRaw()`'s output is a diagnostic/raw dump, not
+the primary battery data path `getBatteries()` already logs the same event
+for at `error` level in the same cycle.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually

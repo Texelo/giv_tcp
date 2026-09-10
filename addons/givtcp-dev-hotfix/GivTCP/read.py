@@ -440,11 +440,11 @@ def getRaw(plant: Plant):
         for i, stck in enumerate(HVStack):
             stack=getall(stck.bcu)
             for b in stck.bmus:
-                if b.is_valid():
-                    sn=b.serial_number
+                sn=b.serial_number
+                if sn and sn.upper().isupper():          # Check for empty BMU object responses and only process if they are complete (have a serial number)
+                    stack[sn]=b
                 else:
-                    sn=b.serial_number
-                stack[sn]=b
+                    logger.debug("getRaw: BMU object invalid/empty (sn="+repr(sn)+"), skipping")
             stacks['Stack_'+str(i)]=stack
         raw['HV_Battery_Stacks']=stacks
     else:
