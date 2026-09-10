@@ -87,7 +87,6 @@ class GivMQTT():
         try:
             while not _mqttclient.connected_flag:        			#wait in loop
                 #GivMQTT.connect()
-                logger.debug ("In wait loop (single_MQTT_publish)")
                 time.sleep(0.2)
             client.publish(Topic,value)
         except:
@@ -100,11 +99,9 @@ class GivMQTT():
         client=GivMQTT.get_connection()
         try:
             while not _mqttclient.connected_flag:        			#wait in loop
-                logger.debug ("In wait loop (multi_MQTT_publish)")
                 time.sleep(0.2)
             for p_load in array:
                 payload=array[p_load]
-                logger.debug('Publishing: '+rootTopic+p_load)
                 output=GivMQTT.iterate_dict(payload,rootTopic+p_load)   #create LUT for MQTT publishing
                 for value in output:
                     if isinstance(output[value],(int, str, float, bytearray)):      #Only publish typesafe data
@@ -123,7 +120,6 @@ class GivMQTT():
                 output=array[p_load]
                 if isinstance(output, dict):
                     MQTT_LUT.update(GivMQTT.iterate_dict(output,topic+"/"+p_load))
-                    logger.debug('Prepping '+p_load+" for publishing")
                 else:
                     MQTT_LUT[topic+"/"+p_load]=output
         else:

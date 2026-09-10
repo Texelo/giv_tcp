@@ -58,11 +58,21 @@ class GivClientAsync:
                         return _client
                     except Exception as exc:
                         last_exc = exc
+                        # exc is often a wrapper (e.g. CommunicationError) whose own str()
+                        # doesn't include the real OS-level reason - that's preserved on
+                        # __cause__ (see client.py's `raise CommunicationError(...) from e`).
+                        # Surface both so a bare "Connection refused" vs a silent timeout
+                        # vs something else is actually distinguishable in the log, instead
+                        # of every failure looking identical.
+                        cause = exc.__cause__
+                        cause_info = f" (caused by {type(cause).__name__}: {cause})" if cause else ""
                         logger.warning(
-                            "Modbus connect attempt %d/%d failed: %s",
+                            "Modbus connect attempt %d/%d failed: %s: %s%s",
                             attempt,
                             connect_retries,
-                            exc,
+                            type(exc).__name__,
+                            exc or "(no message)",
+                            cause_info,
                         )
                         # If this was the last attempt, raise after logging
                         if attempt >= connect_retries:

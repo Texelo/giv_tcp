@@ -501,7 +501,6 @@ def getBatteries(plant: Plant, multi_output_old):
         isHV=plant.capabilities.is_hv
         batteries2={}
         stack={}
-        logger.debug("Getting Battery Details")
         if not isHV:
             GEBat=plant.batteries
             for b in GEBat:
@@ -625,7 +624,6 @@ def getTimeslots(plant: Plant, multi_output_old=None):
         GEInv=plant.ems
     elif not plant.gateway ==None:
         GEInv=plant.gateway
-    logger.debug("Getting TimeSlot data")
     timeslots['Discharge_start_time_slot_1'] = validateTimeslot(GEInv.discharge_slot_1.start,"Discharge_start_time_slot_1",multi_output_old)
     timeslots['Discharge_start_time_slot_2'] = validateTimeslot(GEInv.discharge_slot_2.start,"Discharge_start_time_slot_2",multi_output_old)
     timeslots['Discharge_end_time_slot_1'] = validateTimeslot(GEInv.discharge_slot_1.end,"Discharge_end_time_slot_1",multi_output_old)
@@ -720,7 +718,6 @@ def getControls(plant,regCacheStack, inverterModel,multi_output_old=None):
     elif not plant.gateway ==None:
         GEInv=plant.gateway
 
-    logger.debug("Getting mode control figures")
     # Get Control Mode registers
     if is3PH:
         if GEInv.force_charge_enable==True and GEInv.ac_charge_enable==True:
@@ -995,7 +992,6 @@ def processPVInfo(plant: Plant):
 
     ############  Energy Stats    ############
         # Total Energy Figures
-        logger.debug("Getting Total Energy Data")
 
         energy_total_output['Export_Energy_Total_kWh'] = GEInv.e_grid_out_total
 
@@ -1003,7 +999,6 @@ def processPVInfo(plant: Plant):
         energy_total_output['PV_Energy_Total_kWh'] = GEInv.e_pv_total
 
         # Energy Today Figures
-        logger.debug("Getting Today Energy Data")
         energy_today_output['PV_Energy_Today_kWh'] = GEInv.e_pv1_day+GEInv.e_pv2_day
         energy_today_output['Export_Energy_Today_kWh'] = GEInv.e_grid_out_day
         energy_today_output['Invertor_Energy_Today_kWh'] = GEInv.e_pv_generation_today
@@ -1011,7 +1006,6 @@ def processPVInfo(plant: Plant):
     ############  Core Power Stats    ############
 
         # PV Power
-        logger.debug("Getting PV Power")
         PV_power_1 = GEInv.p_pv1
         PV_power_2 = GEInv.p_pv2
         PV_power = PV_power_1+PV_power_2
@@ -1027,7 +1021,6 @@ def processPVInfo(plant: Plant):
         power_output['Grid_Current'] = GEInv.i_grid_port 
 
         # Grid Power
-        logger.debug("Getting Grid Power")
         grid_power = GEInv.p_grid_out
         if grid_power < 0:
             import_power = abs(grid_power)
@@ -1044,7 +1037,6 @@ def processPVInfo(plant: Plant):
 
 
         # Inverter Power
-        logger.debug("Getting PInv Power")
         inverter_power = GEInv.p_grid_out_ph1
         if -inverterModel.invmaxrate <= inverter_power <=inverterModel.invmaxrate:
             power_output['Invertor_Power'] = inverter_power
@@ -1052,7 +1044,6 @@ def processPVInfo(plant: Plant):
     ############  Power Flow Stats    ############
 
         # Solar to H/B/G
-        logger.debug("Getting Solar to H/B/G Power Flows")
         if PV_power > 0:
             S2H = min(PV_power - export_power,0)
             power_flow_output['Solar_to_House'] = S2H
@@ -1081,7 +1072,6 @@ def processPVInfo(plant: Plant):
             raise ValueError("All zeros returned by inverter, skipping update")
 
         ######## Get Inverter Details ########
-        logger.debug("Getting inverter Details")
         inverter['Invertor_Serial_Number'] = plant.inverter_serial_number
         inverter['Modbus_Version'] = GEInv.modbus_version
         inverter['Invertor_Firmware'] = GEInv.firmware_version
@@ -1175,7 +1165,6 @@ def processInverterInfo(plant: Plant):
 
     ############  Energy Stats    ############
         # Total Energy Figures
-        logger.debug("Getting Total Energy Data")
         if isHV:
             # hotfix14: no LV "alt1" fallback branch here - that's specifically for
             # older LV firmware's known register-shift quirk (see the non-HV branch
@@ -1229,7 +1218,6 @@ def processInverterInfo(plant: Plant):
             energy_total_output['Self_Consumption_Energy_Total_kWh']=self_total
 
         # Energy Today Figures
-        logger.debug("Getting Today Energy Data")
         energy_today_output['PV_Energy_Today_kWh'] = GEInv.e_pv1_day+GEInv.e_pv2_day
         energy_today_output['Import_Energy_Today_kWh'] = GEInv.e_grid_in_day
         energy_today_output['Export_Energy_Today_kWh'] = GEInv.e_grid_out_day
@@ -1292,7 +1280,6 @@ def processInverterInfo(plant: Plant):
     ############  Core Power Stats    ############
 
         # PV Power
-        logger.debug("Getting PV Power")
         PV_power_1 = GEInv.p_pv1
         PV_power_2 = GEInv.p_pv2
         PV_power = PV_power_1+PV_power_2
@@ -1308,7 +1295,6 @@ def processInverterInfo(plant: Plant):
         power_output['Grid_Current'] = GEInv.i_grid_port 
 
         # Grid Power
-        logger.debug("Getting Grid Power")
         grid_power = GEInv.p_grid_out
         if grid_power < 0:
             import_power = abs(grid_power)
@@ -1324,11 +1310,9 @@ def processInverterInfo(plant: Plant):
         power_output['Export_Power'] = export_power
 
         # EPS Power
-        logger.debug("Getting EPS Power")
         power_output['EPS_Power'] = GEInv.p_backup
 
         # Inverter Power
-        logger.debug("Getting PInv Power")
 
 ### Double check register naming
         inverter_power = GEInv.p_grid_out_ph1
@@ -1341,20 +1325,17 @@ def processInverterInfo(plant: Plant):
             power_output['AC_Charge_Power'] = 0
 
         # Load Power
-        logger.debug("Getting Load Power")
         Load_power = GEInv.p_load_demand
         #if Load_power < 15500:
         power_output['Load_Power'] = Load_power
 
         # Self Consumption
-        logger.debug("Getting Self Consumption Power")
         power_output['Self_Consumption_Power'] = max(Load_power - import_power, 0)
 
 
     ############  Power Flow Stats    ############
 
         # Solar to H/B/G
-        logger.debug("Getting Solar to H/B/G Power Flows")
         if PV_power > 0:
             S2H = min(PV_power, Load_power)
             power_flow_output['Solar_to_House'] = S2H
@@ -1365,7 +1346,6 @@ def processInverterInfo(plant: Plant):
             power_flow_output['Solar_to_Grid'] = 0
 
         # Grid to Battery/House Power
-        logger.debug("Getting Grid to Battery/House Power Flow")
         if import_power > 0:
             power_flow_output['Grid_to_House'] = import_power
         else:
@@ -1385,7 +1365,6 @@ def processInverterInfo(plant: Plant):
         # registers same as above, unaffected by HV/LV - only the gate was wrong.
         if numHVBatteryModules>0 or int(plant.number_batteries) > 0:  # only do this if there are batteries
 
-            logger.debug("Getting SOC")
             if GEInv.battery_soc != 0 or GEInv.battery_calibration_stage !=0:        #if we're in calibration mode accept any value
                 power_output['SOC'] = GEInv.battery_soc
             elif GEInv.battery_soc == 0 and len(multi_output_old)>0:
@@ -1399,7 +1378,6 @@ def processInverterInfo(plant: Plant):
             power_output['SOC_kWh'] = round((int(power_output['SOC'])*(inverterModel.batterycapacity))/100,2)
 
             # Energy Stats
-            logger.debug("Getting Battery Energy Data")
             energy_today_output['Battery_Charge_Energy_Today_kWh'] = GEInv.e_battery_charge_today_alt1
             energy_today_output['Battery_Discharge_Energy_Today_kWh'] = GEInv.e_battery_discharge_today_alt1
             energy_today_output['Battery_Throughput_Today_kWh'] = GEInv.e_battery_charge_today_alt1+GEInv.e_battery_discharge_today_alt1
@@ -1460,7 +1438,6 @@ def processInverterInfo(plant: Plant):
             power_output['Combined_Generation_Power'] = GEInv.p_combined_generation
 
         # Power flows
-        logger.debug("Getting Solar to H/B/G Power Flows")
         if PV_power > 0:
             S2H = min(PV_power, Load_power)
             power_flow_output['Solar_to_House'] = S2H
@@ -1474,12 +1451,10 @@ def processInverterInfo(plant: Plant):
             power_flow_output['Solar_to_Grid'] = 0
 
         # Battery to House
-        logger.debug("Getting Battery to House Power Flow")
         B2H = max(discharge_power-export_power, 0)
         power_flow_output['Battery_to_House'] = B2H
 
         # Grid to Battery/House Power
-        logger.debug("Getting Grid to Battery/House Power Flow")
         if import_power > 0:
             power_flow_output['Grid_to_Battery'] = charge_power-max(PV_power-Load_power, 0)
             power_flow_output['Grid_to_House'] = max(import_power-charge_power, 0)
@@ -1489,7 +1464,6 @@ def processInverterInfo(plant: Plant):
             power_flow_output['Grid_to_House'] = 0
 
         # Battery to Grid Power
-        logger.debug("Getting Battery to Grid Power Flow")
         if export_power > 0:
             power_flow_output['Battery_to_Grid'] = max(discharge_power-B2H, 0)
         else:
@@ -1511,7 +1485,6 @@ def processInverterInfo(plant: Plant):
         controlmode.update(res[1])
 
         ######## Get Inverter Details ########
-        logger.debug("Getting inverter Details")
         inverter['Battery_Type'] = GEInv.battery_type.name.capitalize()
         inverter['Battery_Capacity_kWh'] = inverterModel.batterycapacity        #Ah x nom voltage @ 90%
         inverter['Invertor_Serial_Number'] = plant.inverter_serial_number
@@ -1688,7 +1661,6 @@ def processEMSInfo(plant: Plant):
         controlmode['Plant_Discharge_Compensation']=GEInv.plant_discharge_compensation
         
         timeslots = {}
-        logger.debug("Getting TimeSlot data")
         timeslots['EMS_Discharge_start_time_slot_1'] = GEInv.discharge_slot_1.start.isoformat()
         timeslots['EMS_Discharge_end_time_slot_1'] = GEInv.discharge_slot_1.end.isoformat()
         timeslots['EMS_Discharge_start_time_slot_2'] = GEInv.discharge_slot_2.start.isoformat()
@@ -1787,7 +1759,6 @@ def processGatewayInfo(plant: Plant):
             #Use same approach as 3PH to generate the (dis)charge Rate controls
             controlmode['Battery_Discharge_Rate']=int(inverterModel.batmaxrate*(GEInv.battery_discharge_limit_ac/100))
             controlmode['Battery_Charge_Rate']=int(inverterModel.batmaxrate*(GEInv.battery_charge_limit_ac/100))
-            logger.debug("Getting TimeSlot data")
             res = {}
             res=getTimeslots(plant, multi_output_old)
             timeslots.update(res[0])
@@ -1856,7 +1827,6 @@ def processGatewayInfo(plant: Plant):
 
                 # Power flows
                 power_flow_output={}
-                logger.debug("Getting Solar to H/B/G Power Flows")
                 if GEInv.p_pv > 0:
                     S2H = min(GEInv.p_pv, GEInv.p_load)
                     power_flow_output['Solar_to_House'] = S2H
@@ -1870,12 +1840,10 @@ def processGatewayInfo(plant: Plant):
                     power_flow_output['Solar_to_Grid'] = 0
 
                 # Battery to House
-                logger.debug("Getting Battery to House Power Flow")
                 B2H = max(discharge_power-export_power, 0)
                 power_flow_output['Battery_to_House'] = B2H
 
                 # Grid to Battery/House Power
-                logger.debug("Getting Grid to Battery/House Power Flow")
                 if import_power > 0:
                     power_flow_output['Grid_to_Battery'] = charge_power-max(GEInv.p_pv-GEInv.p_load, 0)
                     power_flow_output['Grid_to_House'] = max(import_power-charge_power, 0)
@@ -1885,7 +1853,6 @@ def processGatewayInfo(plant: Plant):
                     power_flow_output['Grid_to_House'] = 0
 
                 # Battery to Grid Power
-                logger.debug("Getting Battery to Grid Power Flow")
                 if export_power > 0:
                     power_flow_output['Battery_to_Grid'] = max(discharge_power-B2H, 0)
                 else:
@@ -2179,7 +2146,6 @@ def processThreePhaseInfo(plant: Plant):
         meters.update(getMeters(plant))
 
         timeslots={}
-        logger.debug("Getting TimeSlot data")
         res = {}
         res=getTimeslots(plant)
         timeslots.update(res[0])

@@ -690,6 +690,64 @@ path works) fixes this specific "Modbus port refuses connections, ping still
 answers" failure mode is a live open question, being tested directly against
 the outage this was found during, not assumed from the code fix alone.
 
+**Resolved, same session**: tested live against the exact outage above.
+`switch.ge_inverter_fh2442g134_restart_inverter` (a `ge_cloud` entity - a
+genuinely separate cloud-API channel, not local Modbus) was pressed manually
+and the connection recovered ~4 minutes later - matching the ~8.5 minute
+recovery time seen in `automation.givtcp_activity_monitor`'s historical
+traces for the same sequence. Confirms the fix path is real. Also confirms,
+separately: even with hotfix19's fix, the *local* reboot button/switch still
+can't help during this exact failure mode, because `read.py`'s write-command
+queue is only drained inside the main loop, which requires the initial
+Modbus connect to already have succeeded - a chicken-and-egg deadlock,
+architectural rather than a bug. `Predbat`'s own `apps.yaml` `auto_restart`
+still targets the broken local switch, not the working cloud one - worth
+fixing separately, not done here.
+
+## hotfix20: surface the real connect-failure reason; cut routine per-cycle debug noise
+
+Two unrelated small changes, bundled because both came out of the same
+live-outage investigation above.
+
+**1. `GivLUT.py`'s connect-retry log line was hiding the real failure
+reason.** `client.py`'s `connect()` wraps every `OSError` as
+`raise CommunicationError(f"Error connecting to {host}:{port}") from e` -
+the real OS-level reason (`e`, e.g. `[Errno 111] Connection refused` vs a
+timeout vs `No route to host`) is correctly preserved as `__cause__`, but
+the retry-loop's `logger.warning(..., exc)` only ever logged the wrapper's
+own generic string, so every failure looked identical in the log regardless
+of actual cause. Now logs the exception type, its own message, and the
+`__cause__` chain if present - so the next occurrence will show whether
+it's an active refusal, a silent timeout, or something else, instead of
+needing to guess. Logging-only, same spirit as hotfix8/15.
+
+**2. Cut ~37 unconditional per-cycle/per-field debug lines that carry no
+diagnostic value** - found while trying to read through tonight's logs
+during the live outage and having to wade through hundreds of routine
+"Getting X" / "Prepping X for publishing" / "Publishing: X" lines to find
+the handful of lines that actually mattered:
+
+- `read.py`: removed 34 bare `logger.debug("Getting <field>")` narration
+  calls scattered across `getRaw()`/`getBatteries()`/`getControls()`/etc -
+  fire unconditionally every read cycle (some twice, once per phase-specific
+  code path), never carry a value, never indicate a problem either way.
+- `mqtt.py`: removed the per-topic `"Publishing: X"` line (fires ~8x/cycle)
+  and the *recursive* `"Prepping X for publishing"` line inside
+  `iterate_dict()` (fires once per nested dict key, every cycle, at every
+  recursion depth - the single largest source of routine noise).
+- `mqtt.py`/`HA_Discovery.py`: removed three `"In wait loop (...)"` lines
+  logged *inside* a `while not connected: sleep(0.2)` busy-wait - directly
+  observed spamming 6 identical lines in under a second earlier tonight,
+  worst offender by volume, zero information beyond "still waiting" (the
+  wait loop itself is unchanged, only the per-200ms log line is gone).
+
+None of these were diagnostic - every genuinely useful debug line added by
+earlier hotfixes (actual register values, decoded results, skip/error
+reasons - e.g. hotfix12's "diagnostic read OK: {...}" lines, hotfix18's
+skip-and-log guard) is untouched. The goal is that a debug-level log capture
+during a real failure is dominated by signal, not by confirmation that
+routine polling is routinely happening.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually

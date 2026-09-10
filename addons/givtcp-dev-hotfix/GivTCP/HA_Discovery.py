@@ -119,7 +119,6 @@ class HAMQTT():
         logger.debug("Connecting to broker: "+ HAMQTT.MQTT_Address)
 #        client=GivMQTT.get_connection()
         while not client.connected_flag:        			#wait in loop
-            logger.debug("In wait loop (sendDiscoMsg)")
             time.sleep(0.2)
 
         logger.debug("Publishing MQTT: " + HAMQTT.MQTT_Address)
