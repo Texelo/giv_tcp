@@ -214,8 +214,16 @@ async def sendAsyncCommand(reqs,readloop,bypass_model_gate=False):
         retries=2  # settings_template.py's own default, if the setting is somehow absent/invalid
     asyncclient=await GivClientAsync.get_connection()
     if not asyncclient.connected:
-        logger.info("Write client not connected after import")
-        await asyncclient.connect()
+        # hotfix21: was a bare asyncclient.connect() here - bypassed
+        # GivClientAsync's _connection_lock, so this could race read.py's own
+        # unlocked reconnect paths (the !client.connected reopen and the
+        # timeoutErrors>5 reset), both touching the same shared client at
+        # once. get_connection() itself already connects-if-needed under the
+        # lock, so re-calling it (rather than a raw .connect()) keeps this on
+        # the same serialised path instead of opening a second, uncoordinated
+        # one.
+        logger.info("Write client not connected after import, reconnecting via GivClientAsync")
+        asyncclient=await GivClientAsync.get_connection(cold_start=True)
     try:
         if bypass_model_gate:
             for req in reqs:

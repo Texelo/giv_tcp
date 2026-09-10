@@ -748,6 +748,63 @@ skip-and-log guard) is untouched. The goal is that a debug-level log capture
 during a real failure is dominated by signal, not by confirmation that
 routine polling is routinely happening.
 
+## hotfix21: three unlocked reconnect call sites racing each other; per-cycle refresh() using too tight a timeout budget
+
+Follow-up to the same investigation as hotfix20, prompted by the question:
+could the short timeouts/low retries be causing GivTCP to prematurely spin up
+extra Modbus connections?
+
+**Root cause, two parts:**
+
+1. `GivLUT.py`'s `GivClientAsync.get_connection()` (added in hotfix16) exists
+   specifically to serialise all connect/close activity on the single shared
+   `_client` through one `asyncio.Lock`. But three call sites never went
+   through it, and each called `.connect()`/`.close()` on the shared client
+   directly:
+   - `read.py`'s main loop, `if not client.connected: ... await client.connect()`
+     ("in case the client has died, reopen it")
+   - `read.py`'s `timeoutErrors>5` hard reset (`await client.close(); sleep(2);
+     await client.connect()`)
+   - `write.py`'s `sendAsyncCommand()`, `if not asyncclient.connected: await
+     asyncclient.connect()`
+   Any two of these could fire close together - e.g. a write comes in from
+   Predbat/REST while the read loop's own reconnect is mid-flight - and race
+   on the same underlying socket with no coordination between them: one
+   coroutine's `close()` landing between another's `connect()` calls, instead
+   of one clean, coordinated reconnect. Not literally two live connections at
+   once (the vendored `client.connect()` is idempotent and tears itself down
+   first), but repeated, uncoordinated open→close→open churn - exactly the
+   "extra connections" pattern being asked about.
+2. That churn was being triggered more often than it needed to be, because
+   `read.py`'s per-cycle `client.refresh()` call (the one actually reading
+   the HV stack's registers) was called bare, with no `timeout`/`retries`
+   args - silently falling through to the vendored library's own default of
+   `timeout=2.0, retries=1`. The library's own docstring for `refresh()` says
+   this budget is tuned assuming the caller either owns the bus exclusively
+   or tolerates "spurious timeouts even though the device is responsive"
+   under any contention. `watch_plant()` already declares its own
+   `timeout: float = 3, retries: int = 5` parameters for exactly this - they
+   were just never actually passed to `refresh()`, so they did nothing. 5
+   consecutive spurious timeouts (very reachable inside ~75s at the default
+   15s `refresh_period`) is what trips reconnect path #2 above.
+
+**Fix:**
+
+- All three call sites now go through `GivClientAsync.get_connection()` /
+  `close_connection()` instead of touching the shared client directly, so
+  they share the lock hotfix16 built for exactly this.
+- Both `client.refresh()` calls in `read.py` (the initial one and the
+  per-cycle one) now pass `timeout=timeout, retries=retries`, using
+  `watch_plant()`'s existing (previously dead) 3s/5-retries parameters
+  instead of the library's tighter 2.0s/1-retry default.
+
+**Verification:** deployed and watched several read cycles under normal
+load — clean refreshes, no spurious `timeoutErrors` increments, and no
+close/connect log lines outside of genuine startup/shutdown. Because the
+original churn was intermittent (needed either contention or an already-flaky
+connection to trigger), the real test is whether `timeoutErrors>5`/repeated
+reconnect log lines stop recurring over the coming days — will keep watching.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually

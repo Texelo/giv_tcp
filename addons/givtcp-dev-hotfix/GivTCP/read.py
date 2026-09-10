@@ -176,7 +176,14 @@ async def watch_plant(
                 await client.load_config()
             except:
                 pass
-            await client.refresh()
+            # hotfix21: was a bare client.refresh() - fell through to the
+            # vendored library's own default (timeout=2.0, retries=1), which
+            # its docstring says is tuned assuming the caller either owns the
+            # bus exclusively or tolerates "spurious timeouts even though the
+            # device is responsive" under contention. watch_plant()'s own
+            # timeout/retries params (3/5) already exist for exactly this but
+            # were never actually passed in - fixing that here.
+            await client.refresh(timeout=timeout, retries=retries)
             if not client.plant.capabilities.is_ems and client.plant.capabilities.device_type == Model.HYBRID_HV_GEN3:
                 await _readEmsTargetDiag(client)
             #await client.close()
@@ -226,8 +233,16 @@ async def watch_plant(
             try:
                 if not client.connected:
                     #in case the client has died, reopen it
+                    # hotfix21: was a bare client.connect() here - bypassed
+                    # GivClientAsync's _connection_lock entirely, so this could
+                    # race write.py's own connect-if-not-connected (sendAsyncCommand)
+                    # or the timeoutErrors>5 reset below, both of which could be
+                    # touching the same shared client at the same moment. Routing
+                    # through get_connection() serialises all three call sites on
+                    # the one lock instead of each doing its own unguarded
+                    # close/connect on the same socket.
                     logger.critical("Re-opening Modbus Connecion to: "+str(GiV_Settings.invertorIP))
-                    await client.connect()
+                    client = await GivClientAsync.get_connection()
                 # Write command and initiation to use the same client connection
                 if exists(GivLUT.writerequests):
                     if client.plant.capabilities.is_ems:
@@ -317,7 +332,11 @@ async def watch_plant(
                         logger.debug ("Running partial refresh")
                     try:
                         try:
-                            await client.refresh()
+                            # hotfix21: see the initial refresh() call above -
+                            # same fix, same reasoning (this is the per-cycle
+                            # refresh that was actually driving the 5-in-a-row
+                            # timeout counter below).
+                            await client.refresh(timeout=timeout, retries=retries)
                             if fullRefresh:
                                 await client.load_config()  #Run full HR read on fullRefresh
                             if not client.plant.capabilities.is_ems and client.plant.capabilities.device_type == Model.HYBRID_HV_GEN3:
@@ -348,9 +367,18 @@ async def watch_plant(
                         logger.debug("Not running handler")
                         if timeoutErrors>5:
                             logger.error("5 consecutive timeout errors in watch loop. Restarting modbus connection:")
-                            await client.close()
+                            # hotfix21: was a bare client.close()/client.connect() pair
+                            # here, bypassing GivClientAsync's _connection_lock. That let
+                            # this reset race write.py's own unlocked connect (and the
+                            # !client.connected reopen above) - two coroutines could end
+                            # up closing/reopening the same shared client back-to-back
+                            # instead of one coordinated reconnect, producing exactly the
+                            # kind of premature repeat-connection churn a tight refresh()
+                            # timeout budget (see below) was tripping more often than
+                            # necessary. Routing through GivClientAsync serialises it.
+                            await GivClientAsync.close_connection()
                             await asyncio.sleep(2)      #Just pause for a moment before trying to reconnect
-                            await client.connect()
+                            client = await GivClientAsync.get_connection(cold_start=True)
                         continue
                     if handler:
                         try:
