@@ -928,6 +928,35 @@ there with no duplication, and it picks up `startup.py`'s root-logger calls
 (this traceback, and anything else logged the same way) for free, in the
 same single line.
 
+## hotfix25: startup.py crashed the whole addon into Supervisor's "error" state on a failed boot-time detection, instead of retrying
+
+Discovered live: deploying hotfix24 restarted the addon while the dongle was
+still mid-outage (the same one this session had been chasing all night).
+`startup.py`'s `createsettingsjson()` calls `getInvDeets()` once to detect
+the inverter model when `Model_<n>` isn't already cached; `getInvDeets()`
+already catches its own failures and returns `None` rather than raising -
+but the line right after it, `inverter_type['Model'].name.capitalize()`,
+assumed a dict and crashed with a bare `TypeError: 'NoneType' object is not
+subscriptable` the moment detection failed. That's a hard crash, not a
+retry - Supervisor showed the addon as `state: error`, and a subsequent
+manual `start` hit the exact same crash again (confirming this runs, and can
+fail, on every boot while the dongle is down - not a one-off).
+
+Every other connection path in this addon already retries rather than
+crashing on a single failure - `GivClientAsync.get_connection()`,
+`watch_plant()`'s own reconnect logic. This was the one exception, and
+because it runs at module level during boot, hitting it means the whole
+container exits and stays down until someone notices and intervenes -
+exactly the outcome the rest of tonight's fixes were trying to avoid.
+
+Fix: retry `getInvDeets()` on a 30s backoff instead of crashing on the first
+failure - deliberately uncapped, matching `watch_plant()`'s own philosophy.
+Tonight's outage that exposed this ran well past 30 minutes; a capped retry
+would just trade "crashes immediately" for "crashes later, still needs a
+manual restart." Uncapped means the addon comes up on its own the moment the
+dongle does, no intervention needed - each failed attempt is now logged
+clearly (and, per hotfix24, durably) instead of silently retrying forever.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually

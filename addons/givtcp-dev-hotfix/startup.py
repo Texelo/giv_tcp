@@ -128,7 +128,34 @@ def createsettingsjson(inv):
     with open(SFILE, 'r') as f1:
         setts=json.load(f1)
     if setts["Model_"+str(inv)]=="":
-        inverter_type= asyncio.run(getInvDeets(str(setts["invertorIP_"+str(inv)])))
+        # hotfix24: was a single asyncio.run(getInvDeets(...)) attempt - if the
+        # inverter/dongle isn't answering yet (getInvDeets() logs its own
+        # traceback and returns None on any failure, including simply not
+        # being reachable this early in boot), inverter_type was None and the
+        # very next line crashed with a bare "TypeError: 'NoneType' object is
+        # not subscriptable" - taking the whole addon down into Supervisor's
+        # "error" state instead of just retrying, unlike every other
+        # connection path in this addon (GivClientAsync, watch_plant()) which
+        # already retries rather than crashing. Hit live: the dongle was mid
+        # multi-minute outage (see tonight's README entries) when this addon
+        # happened to restart, and it stayed crashed - manual intervention
+        # needed - instead of coming back on its own once the dongle recovered.
+        # Retry with a 30s backoff instead of giving up - deliberately
+        # uncapped, same philosophy as watch_plant()'s own connection
+        # handling elsewhere in this addon. Tonight's outage that exposed this
+        # bug ran well past 30 minutes; a capped retry here would just trade
+        # "crashes immediately" for "crashes after N minutes and still needs
+        # a manual restart" - an uncapped retry means the addon comes up on
+        # its own the moment the dongle does, with no intervention, matching
+        # how the rest of the addon already behaves once past this point.
+        inverter_type=None
+        attempt=0
+        while inverter_type is None:
+            attempt+=1
+            inverter_type= asyncio.run(getInvDeets(str(setts["invertorIP_"+str(inv)])))
+            if inverter_type is None:
+                logger.error("createsettingsjson: getInvDeets attempt %d failed (see traceback above), retrying in 30s" % attempt)
+                sleep(30)
         setts["Model_"+str(inv)]= inverter_type['Model'].name.capitalize()
         with open(SFILE, 'w') as f:
             f.write(json.dumps(setts,indent=4))
