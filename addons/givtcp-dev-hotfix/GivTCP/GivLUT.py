@@ -171,22 +171,24 @@ class GivLUT:
     fh = TimedRotatingFileHandler(GiV_Settings.Debug_File_Location, when='midnight', backupCount=7)
     fh.setFormatter(formatter)
     logger = logging.getLogger('read_logger')
-    logger.addHandler(fh)
-    # hotfix22: two sources of exactly the diagnostics needed after an outage
-    # were never reaching this durable, /config-backed rotating file - only
-    # the container's own ephemeral stdout, which gets wiped on every
-    # restart (including the restart the outage itself often triggers).
-    # GivClientAsync's connect-retry logging (hotfix20) uses this module's
-    # own top-level `logger` (logging.getLogger("GivLUT"), a separate object
-    # from the `logger`/'read_logger' one built above), and the vendored
-    # givenergy-modbus library logs its own connection-lost/request-timeout
-    # warnings (the ones that actually carry a device_address - the detail
-    # that would tell us whether it's one flaky module or the whole dongle)
-    # under its own top-level "givenergy_modbus" logger name. Attaching the
-    # same handler to both - rather than inventing a second logging path -
-    # means both now land in the file that already survives restarts.
-    logging.getLogger("GivLUT").addHandler(fh)
-    logging.getLogger("givenergy_modbus").addHandler(fh)
+    # hotfix24: fh used to be attached directly here (and, as of hotfix22,
+    # also directly to "GivLUT" and "givenergy_modbus") to get their output
+    # into this durable, /config-backed rotating file instead of only the
+    # container's ephemeral stdout (which gets wiped on every restart -
+    # including the restart an outage often triggers). Chasing one more gap
+    # tonight (startup.py's own `logger = logging.getLogger()` - the bare
+    # root logger, used for getInvDeets()'s device-detection tracebacks)
+    # surfaced that the scattered per-logger approach was already wrong:
+    # none of 'read_logger'/"GivLUT"/"givenergy_modbus" have propagate=False,
+    # so every record from them was already reaching root's own handlers too
+    # (that's the only reason "GivLUT"/"givenergy_modbus" - which never had
+    # their own handler before hotfix22 - were ever visible in stdout at
+    # all). Attaching fh to each of them individually AND to root would have
+    # written every line twice. Attaching it once, to root, is both
+    # sufficient (propagation already delivers everything there) and
+    # correct (no duplication) - and picks up startup.py's root-logger calls
+    # for free in the same line.
+    logging.getLogger().addHandler(fh)
     # Track last midnight reset date so other modules can reference a single
     # source-of-truth instead of keeping per-module state.
     if str(GiV_Settings.Log_Level).lower()=="debug":

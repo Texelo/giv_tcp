@@ -902,6 +902,32 @@ detail needed to finally tell "one flaky battery module" apart from "the
 whole dongle wedging" - next occurrence should show it either way: real data
 if `.failures` is present, or a confirmed absence either way if not.
 
+## hotfix24: durable logging, done properly - one root attachment instead of four scattered ones (and a duplication bug caught before it shipped)
+
+Prompted by the user pointing at a `startup.py` traceback
+(`getInvDeets()`'s `client.detect()` timeout, at addon boot, before the
+main read loop even starts) that still wasn't reaching the durable file
+hotfix22 built. Root cause: `startup.py` logs through
+`logger = logging.getLogger()` - the bare **root** logger, a fourth logger
+hotfix22 didn't know to attach to alongside `'read_logger'`/`"GivLUT"`/
+`"givenergy_modbus"`.
+
+Went to bolt `fh` onto root as a fourth attachment and caught a real bug
+before shipping it: none of the other three loggers have `propagate=False`,
+so their records were already reaching root's own handlers via normal
+propagation - that's the *only* reason `"GivLUT"`/`"givenergy_modbus"`
+(which had no handler of their own before hotfix22) were ever visible in
+stdout in the first place. Adding `fh` to root as well would have written
+every `'read_logger'`/`"GivLUT"`/`"givenergy_modbus"` line to the durable
+file **twice** - direct handler once, propagated-to-root copy once - which
+would have undone a chunk of hotfix20/22's own noise-reduction work.
+
+Fixed properly: removed the three direct `fh` attachments, kept exactly one
+- on root. Propagation already delivers every one of those loggers' records
+there with no duplication, and it picks up `startup.py`'s root-logger calls
+(this traceback, and anything else logged the same way) for free, in the
+same single line.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually
