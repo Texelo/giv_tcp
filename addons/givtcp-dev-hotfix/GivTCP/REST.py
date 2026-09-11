@@ -40,6 +40,31 @@ def requestcommand(command,payload):
         logger.error ("Error in requesting control command: "+str(e))
 
 def response(id: str):
+    """Poll restresponse.json for the entry read.py's write-dispatch loop left
+    for this request's id, matching purely on command name (not a unique
+    per-call token - see hotfix22 note below).
+
+    hotfix22: this used to unconditionally log every entry in the file on
+    every 100ms poll tick, and never removed an entry unless *this exact
+    call* matched it - so any response whose original REST caller gave up,
+    disconnected, or (in the fire-and-forget case) never called response()
+    at all sat in the file forever, getting re-read and re-logged in full by
+    every other response() call from then on. Root-caused from a log capture
+    that looked like the same handful of writes were repeating forever - they
+    weren't; those were stale, already-delivered-or-abandoned records nobody
+    had ever cleaned up. Two changes: prune anything past a generous 30s (the
+    wait loop below already gives up after 15s, so nothing legitimately
+    still-awaited should be older than that) whenever any response() call
+    touches the file, and only log the entry actually being matched against
+    this call's id instead of dumping the whole list every tick.
+
+    Note this still doesn't give concurrent identically-named commands
+    (e.g. two setBatteryPauseMode calls in flight at once) a way to tell
+    their responses apart - id is the command name, not a unique per-call
+    token - so a caller can in principle collect another in-flight call's
+    result if both are still pending at the same moment. Not fixed here;
+    flagging it since the dedup above surfaced it.
+    """
     responses=[]
     starttime=datetime.datetime.now()
     while True:
@@ -48,15 +73,32 @@ def response(id: str):
             with GivLUT.restlock:
                 with open(GivLUT.restresponse,'r') as inp:
                     responses=json.load(inp)
-                for response in responses[:]:
-                    logger.debug("Response in file is: "+str(response))
-                    if response['id']==id:
-                        logger.debug("found REST response")
-                        # remove item from responses
-                        responses.remove(response)
-                        with open(GivLUT.restresponse,'w') as outp:
-                            outp.write(json.dumps(responses))
-                        return response['result']            
+                now_ts=datetime.datetime.now().timestamp()
+                fresh=[]
+                pruned=0
+                match=None
+                for response in responses:
+                    # response['ts'] may be absent on records written before
+                    # hotfix22 - treat those as immediately stale rather than
+                    # erroring, since they're leftovers from before this fix.
+                    age=now_ts-response.get('ts',0)
+                    if match is None and response['id']==id:
+                        match=response
+                        continue    # not carried into fresh - this is the one we're returning
+                    if age>30:
+                        pruned+=1
+                        continue
+                    fresh.append(response)
+                if pruned:
+                    logger.debug("Pruned "+str(pruned)+" stale/abandoned REST response(s), nobody ever collected them")
+                if match is not None:
+                    logger.debug("found REST response: "+str(match))
+                    with open(GivLUT.restresponse,'w') as outp:
+                        outp.write(json.dumps(fresh))
+                    return match['result']
+                if pruned:
+                    with open(GivLUT.restresponse,'w') as outp:
+                        outp.write(json.dumps(fresh))
         waittime=datetime.datetime.now()-starttime
         if waittime.total_seconds()>15:
             return "{'result':'Error: REST response timeout. Unknown success'}"

@@ -270,6 +270,10 @@ async def watch_plant(
                                     responses=[]
                                     response['id']=command[0]
                                     response['result']=result
+                                    # hotfix22: timestamp each response record so REST.py's
+                                    # response() can prune entries nobody ever collected -
+                                    # see restresponse.json note there for why that matters.
+                                    response['ts']=datetime.datetime.now().timestamp()
                                     if exists(GivLUT.restresponse):
                                         with GivLUT.restlock:
                                             with open(GivLUT.restresponse,'r') as inp:
@@ -2556,8 +2560,13 @@ def publishOutput(array, SN):
             open(GivLUT.firstrun, 'w').close()
             if exists('/config/GivTCP/.v3upgrade_'+str(GiV_Settings.givtcp_instance)):
                 os.remove('/config/GivTCP/.v3upgrade_'+str(GiV_Settings.givtcp_instance))
-        else:
-            logger.debug("firstrun exists, so this should already have been run")
+        # hotfix22: was an else: logger.debug("firstrun exists, so this should
+        # already have been run") here - GivLUT.firstrun is a one-time marker
+        # file created on the addon's very first successful cycle and never
+        # removed, so this branch is what actually runs on every single cycle
+        # for the rest of the addon's life. Same species of permanent,
+        # zero-information per-cycle noise hotfix20 cut elsewhere - this one
+        # was just missed because of where it lives.
         logger.debug("Publish all to MQTT")
         if GiV_Settings.MQTT_Topic == "":
             GiV_Settings.MQTT_Topic = "GivEnergy"

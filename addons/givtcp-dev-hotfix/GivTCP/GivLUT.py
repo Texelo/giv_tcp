@@ -172,6 +172,21 @@ class GivLUT:
     fh.setFormatter(formatter)
     logger = logging.getLogger('read_logger')
     logger.addHandler(fh)
+    # hotfix22: two sources of exactly the diagnostics needed after an outage
+    # were never reaching this durable, /config-backed rotating file - only
+    # the container's own ephemeral stdout, which gets wiped on every
+    # restart (including the restart the outage itself often triggers).
+    # GivClientAsync's connect-retry logging (hotfix20) uses this module's
+    # own top-level `logger` (logging.getLogger("GivLUT"), a separate object
+    # from the `logger`/'read_logger' one built above), and the vendored
+    # givenergy-modbus library logs its own connection-lost/request-timeout
+    # warnings (the ones that actually carry a device_address - the detail
+    # that would tell us whether it's one flaky module or the whole dongle)
+    # under its own top-level "givenergy_modbus" logger name. Attaching the
+    # same handler to both - rather than inventing a second logging path -
+    # means both now land in the file that already survives restarts.
+    logging.getLogger("GivLUT").addHandler(fh)
+    logging.getLogger("givenergy_modbus").addHandler(fh)
     # Track last midnight reset date so other modules can reference a single
     # source-of-truth instead of keeping per-module state.
     if str(GiV_Settings.Log_Level).lower()=="debug":

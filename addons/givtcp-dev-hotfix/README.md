@@ -805,6 +805,69 @@ original churn was intermittent (needed either contention or an already-flaky
 connection to trigger), the real test is whether `timeoutErrors>5`/repeated
 reconnect log lines stop recurring over the coming days — will keep watching.
 
+## hotfix22: diagnostics were never reaching the durable log; restresponse.json leaking forever; one more permanent per-cycle noise line
+
+Three small fixes, all found while going through live logs during tonight's
+outages (same session as hotfix21).
+
+**1. hotfix20's connect diagnostics, and the vendored library's own
+connection-lost/timeout warnings, were never reaching the durable log.**
+`GivLUT.py` already builds a `TimedRotatingFileHandler` writing to
+`/config/GivTCP/logs/log_inv_<n>.log` - under the mapped, persistent
+`/config` volume, so it survives addon restarts - and attaches it to a
+logger named `'read_logger'`, which `read.py`/`REST.py`/`mqtt.py` all
+correctly use (`logger = GivLUT.logger`). But `GivClientAsync` (added in
+hotfix16) logs through this module's own separate top-level
+`logger = logging.getLogger("GivLUT")` - a different logger object, with no
+file handler of its own, only reaching the container's ephemeral stdout.
+Same problem one level down: the vendored `givenergy-modbus` library's own
+warnings - `network_consumer: connection lost (reader at EOF)`,
+`Timeout awaiting <block>Response(device_address=0x11 ...) after N tries,
+giving up` (the ones that actually carry a device_address - the detail that
+would show whether one specific battery module is flaky versus the whole
+dongle wedging) - log under their own `"givenergy_modbus"` name, also with no
+file handler. So the exact diagnostics needed to debug the next outage were
+being generated, then destroyed by the very restart the outage often
+triggers, before anyone could read them. This was found chasing that
+directly: a live incident tonight produced a `device_address=0x11` timeout
+that would have been genuinely useful to correlate against future
+occurrences, and by the time it could be inspected the container had already
+restarted and the line was gone.
+
+Fix: attach the same handler to both `"GivLUT"` and `"givenergy_modbus"` -
+both now land in the durable file alongside everything else, no new logging
+path invented.
+
+**2. `restresponse.json` (the write-command REST response relay) leaked
+forever and re-logged every stale entry on every poll tick.** `REST.py`'s
+`response(id)` polls this file every 100ms waiting for its own request's
+result, and only ever removed the one entry it matched - any response whose
+original caller gave up, disconnected, or never actually called `response()`
+to collect it (a fire-and-forget write) stayed in the file permanently, and
+every subsequent `response()` call - for any id - dumped the *entire* file's
+contents to debug log on every single 100ms tick while waiting. Looked
+exactly like the same handful of writes repeating forever; they weren't -
+they were stale, already-delivered-or-abandoned records nobody had ever
+cleaned up, most likely accumulated from Predbat's own periodic
+reconciliation writes. Fix: each response record now carries a timestamp
+(`read.py`), and `response()` prunes anything older than 30s (comfortably
+past its own 15s give-up point) whenever it touches the file, and only logs
+the entry it's actually matching instead of the whole list every tick.
+
+Flagging, not fixing here: entries are still matched purely by command name
+(e.g. `"setBatteryPauseMode"`), not a unique per-call token, so two
+identically-named commands genuinely in flight at once could in principle
+collect each other's result. Pre-existing, unrelated to the leak, would need
+threading a real request ID through `requestcommand()`/the write-dispatch
+loop/`response()` to fix properly.
+
+**3. One more permanent per-cycle debug line missed by hotfix20.** `else:
+logger.debug("firstrun exists, so this should already have been run")` -
+`GivLUT.firstrun` is a one-time marker file created after the addon's first
+successful cycle and never removed, so this is what actually runs on every
+cycle for the rest of the addon's life, forever, saying nothing. Removed,
+same reasoning as hotfix20's cleanup.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually
