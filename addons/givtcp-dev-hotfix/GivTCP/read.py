@@ -348,6 +348,25 @@ async def watch_plant(
                         except Exception as res:
                             hasTimeout=True
                             logger.debug("Timeout Error: "+str(res.__class__.__name__))
+                            # hotfix22: RefreshFailed/RefreshPartiallySucceeded carry a
+                            # structured .failures list (device_address, request type,
+                            # base_register per failed read) as a data attribute on the
+                            # exception itself - independent of whether the installed
+                            # givenergy-modbus build's own internal logging happens to
+                            # log it too (checked tonight: it doesn't, for this code
+                            # path, in whatever version is actually deployed here vs.
+                            # the newer reference checkout used to plan this fix -
+                            # getattr keeps this a no-op rather than a crash if that
+                            # turns out to be true for .failures as well). This is the
+                            # detail that tells us whether it's one specific flaky
+                            # battery module or genuinely everything at once.
+                            failures=getattr(res,'failures',None)
+                            if failures:
+                                logger.error("Failed register reads: "+", ".join(
+                                    "device_address=0x%02x %s base_register=%s" % (
+                                        f.device_address, f.request_type, f.base_register
+                                    ) for f in failures
+                                ))
                             raise Exception(res)
                         timeoutErrors=0     # Reset timeouts if all is good this run
                         logger.debug("Data get was successful, now running handler if needed: ")

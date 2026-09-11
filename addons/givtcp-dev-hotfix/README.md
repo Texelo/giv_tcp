@@ -868,6 +868,40 @@ successful cycle and never removed, so this is what actually runs on every
 cycle for the rest of the addon's life, forever, saying nothing. Removed,
 same reasoning as hotfix20's cleanup.
 
+## hotfix23: surface RefreshFailed/RefreshPartiallySucceeded's own structured failure data, since the installed library's own logging for it apparently doesn't (yet)
+
+Direct follow-up to hotfix22, from watching a live recurrence immediately
+after deploying it.
+
+hotfix22 assumed the vendored `givenergy-modbus` library's own
+`_execute_reads()` (the function behind every `client.refresh()` call - i.e.
+the normal per-cycle poll, not just `detect()`'s one-off reads) would log
+`_logger.warning("All %d register reads failed...")` /
+`_logger.warning("%d of %d register reads failed: %s", ...)` immediately
+before raising `RefreshFailed`/`RefreshPartiallySucceeded`, per the reference
+checkout used to plan hotfix20-22. Watching a live "all 7 register reads
+failed" recurrence right after deploying hotfix22, across 6 consecutive
+occurrences, neither line ever appeared - not even the exact `client`-module
+warning line seen during last night's outage. Either the installed build
+(pinned `givenergy-modbus==2.13.0`, but see this repo's own README section
+below on why version strings alone can't be trusted to mean identical code)
+doesn't yet carry this particular logging, or something else is suppressing
+it - not fully resolved, and not worth more time chasing blind.
+
+Instead of depending on the library's own internal logging (whatever version
+is actually running), `RefreshFailed`/`RefreshPartiallySucceeded` both carry
+a `.failures` list as a plain data attribute on the exception object itself -
+`ReadFailure(device_address, request_type, base_register, register_count)`
+per failed read - regardless of whether anything ever logs it. `read.py`'s
+watch-loop exception handler already catches this exact exception every
+cycle; it just wasn't looking at anything beyond the bare `str(res)` message.
+Now pulls `.failures` (via `getattr`, so this is a no-op rather than a crash
+if that attribute also turns out to be missing from whatever's actually
+deployed) and logs which device address(es) actually failed. This is the
+detail needed to finally tell "one flaky battery module" apart from "the
+whole dongle wedging" - next occurrence should show it either way: real data
+if `.failures` is present, or a confirmed absence either way if not.
+
 ## How this is packaged
 
 None of the branches in this repo (`main`, `dev3`, `modbusv2`) match what's actually
